@@ -1,38 +1,9 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
-
 from utils.config import config
 from utils.image_converter import to_gaf_image
 from models.transformer_encoder import build_transformer_encoder
 from models.gan_decoder import build_gan_decoder
-
-# 제안된 MultiScaleCNN 모듈 정의
-class MultiScaleCNN(nn.Module):
-    def __init__(self, input_dim, cnn_output_dim=128):
-        super().__init__()
-        # 출력 채널의 합이 cnn_output_dim과 일치하도록 보장
-        short_channels = cnn_output_dim // 2
-        medium_channels = cnn_output_dim - short_channels
-
-        # 짧은 패턴 감지기 (예: 3시간) - 급격한 변화 포착용
-        self.conv_short = nn.Conv1d(input_dim, short_channels, kernel_size=3, padding=1)
-        
-        # 중간 패턴 감지기 (예: 7시간) - 점진적 변화 포착용
-        self.conv_medium = nn.Conv1d(input_dim, medium_channels, kernel_size=7, padding=3)
-        
-    def forward(self, x):
-        # x shape: (batch, channels, seq_len)
-        short_features = F.relu(self.conv_short(x))
-        medium_features = F.relu(self.conv_medium(x))
-        
-        # 다른 스케일의 특징들을 결합
-        combined_features = torch.cat([short_features, medium_features], dim=1)
-        
-        # Global Average Pooling으로 고정된 크기의 벡터 생성
-        pooled_features = F.adaptive_avg_pool1d(combined_features, 1)
-        return pooled_features.squeeze(-1)
 
 class HybridModel(nn.Module):
     """
@@ -58,7 +29,7 @@ class HybridModel(nn.Module):
     3.  **Conditional Generation (GAN Decoder)**: A GAN-based Decoder generates
         the final prediction, conditioned on the rich, fused feature vector.
     """
-    def __init__(self, d_model, n_heads, n_layers, input_dim, noise_dim, output_dim):
+    def __init__(self, d_model, n_heads, n_layers, input_dim, noise_dim, output_dim, dropout_p):
         super(HybridModel, self).__init__()
         
         self.cnn_mode = config.CNN_MODE
@@ -69,15 +40,20 @@ class HybridModel(nn.Module):
             input_dim=input_dim,
             d_model=d_model,
             n_heads=n_heads,
-            n_layers=n_layers
+            n_layers=n_layers,
+            dropout_p=dropout_p
         )
         
         # --- Local Path (Switchable CNN) ---
         cnn_output_dim = 128
         if self.cnn_mode == '1D':
-            # 기존 Sequential CNN을 새로운 MultiScaleCNN으로 교체
-            self.cnn_encoder = MultiScaleCNN(input_dim=input_dim, cnn_output_dim=cnn_output_dim)
-
+            self.cnn_encoder = nn.Sequential(
+                nn.Conv1d(in_channels=input_dim, out_channels=64, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.Conv1d(in_channels=64, out_channels=cnn_output_dim, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.AdaptiveAvgPool1d(1)
+            )
         elif self.cnn_mode == '2D':
             # For 2D, we process each feature as a separate channel in the image
             self.cnn_encoder = nn.Sequential(
@@ -136,14 +112,15 @@ class HybridModel(nn.Module):
         
         return prediction
 
-def build_model(d_model, n_heads, n_layers, input_dim, noise_dim, output_dim) -> HybridModel:
+def build_model(d_model, n_heads, n_layers, input_dim, noise_dim, output_dim, dropout_p) -> HybridModel:
     model = HybridModel(
         d_model=d_model,
         n_heads=n_heads,
         n_layers=n_layers,
         input_dim=input_dim,
         noise_dim=noise_dim,
-        output_dim=output_dim
+        output_dim=output_dim,
+        dropout_p=dropout_p
     )
     model.to(config.DEVICE)
     return model

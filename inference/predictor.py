@@ -1,37 +1,53 @@
 import torch
 import numpy as np
+import pandas as pd
 import glob
 import os
 import json
 import torch.serialization
-import torch.nn
+import torch.nn as nn
 import models.hybrid_model
 import models.transformer_encoder
+from models.hybrid_model import build_model
+from scipy.stats import zscore
 
 from utils.config import config
 from utils.logger import logger
-from data import database, preprocessor
-# build_model is no longer needed as we load the whole model object
-# from models.hybrid_model import build_model
+from data import database
+from data.preprocessor import get_intermediate_data, create_final_sequences_and_scale, get_market_index
+from utils.metrics import calculate_ece
+from sklearn.calibration import calibration_curve
 
-from dtaidistance import dtw
+from tslearn.metrics import soft_dtw
 
 def get_pattern_similarity(pattern1: np.ndarray, pattern2: np.ndarray) -> float:
     """
-    Calculates the similarity between two price change patterns using Dynamic Time Warping (DTW).
+    Calculates the similarity between two price change patterns using Soft Dynamic Time Warping (soft-DTW)
+    with z-score normalization.
     """
     if len(pattern1) == 0 or len(pattern2) == 0:
         return float('inf')
 
-    pattern1 = np.array(pattern1, dtype=np.double)
-    pattern2 = np.array(pattern2, dtype=np.double)
-    distance = dtw.distance(pattern1, pattern2)
+    # Z-score normalization to compare shapes
+    pattern1_norm = zscore(pattern1)
+    pattern2_norm = zscore(pattern2)
+
+    # Reshape for tslearn: (sz, d)
+    p1_reshaped = pattern1_norm.reshape(-1, 1)
+    p2_reshaped = pattern2_norm.reshape(-1, 1)
+
+    # Use gamma=0.1 as a starting point
+    distance = soft_dtw(p1_reshaped, p2_reshaped, gamma=0.1)
+    
     return distance
 
-N_INFERENCES = 30 # Number of times to run prediction for MC Dropout
 
-def run(markets: list):
-    """Makes ensembled, probabilistic predictions for a given list of markets."""
+
+def run(markets: list, market_index_df: pd.DataFrame = None, historical_df: pd.DataFrame = None):
+    """
+    Makes ensembled, probabilistic predictions for a given list of markets.
+    Can accept pre-loaded dataframes for efficient backtesting.
+    """
     logger.info(f"--- Making ensembled predictions for {len(markets)} markets ---")
 
     model_paths = glob.glob(os.path.join("models", "model_*.pth"))
@@ -43,68 +59,122 @@ def run(markets: list):
     models = []
     for path in model_paths:
         try:
-            # Load the entire model object directly by setting weights_only=False.
-            # This is required for recent PyTorch versions.
-            model = torch.load(path, map_location=config.DEVICE, weights_only=False)
+            loaded_obj = torch.load(path, map_location=config.DEVICE, weights_only=False)
+
+            if isinstance(loaded_obj, nn.Module):
+                model = loaded_obj
+            else:
+                state_dict = loaded_obj
+                if 'state_dict' in state_dict:
+                    state_dict = state_dict['state_dict']
+
+                encoder_weight_key = None
+                if 'transformer_encoder.encoder_layer.weight' in state_dict:
+                    encoder_weight_key = 'transformer_encoder.encoder_layer.weight'
+                else:
+                    for key in state_dict.keys():
+                        if key.endswith('encoder_layer.weight'):
+                            encoder_weight_key = key
+                            break
+                if encoder_weight_key is None:
+                    raise KeyError('encoder_layer.weight')
+
+                encoder_weight = state_dict[encoder_weight_key]
+                input_dim = encoder_weight.shape[1]
+                d_model_loaded = encoder_weight.shape[0]
+
+                decoder_weight_key = None
+                for key in reversed(state_dict.keys()):
+                    if key.startswith('decoder') and key.endswith('weight'):
+                        decoder_weight_key = key
+                        break
+                if decoder_weight_key is None:
+                    raise KeyError('decoder weight')
+                output_dim = state_dict[decoder_weight_key].shape[0]
+
+                noise_dim = getattr(config, 'GAN_NOISE_DIM', 32)
+                n_layers = getattr(config, 'N_LAYERS', 3)
+                n_heads = getattr(config, 'N_HEADS', 8)
+                dropout_p = getattr(config, 'DROPOUT_P', 0.1)
+
+                model = build_model(
+                    d_model=d_model_loaded,
+                    n_heads=n_heads,
+                    n_layers=n_layers,
+                    input_dim=input_dim,
+                    noise_dim=noise_dim,
+                    output_dim=output_dim,
+                    dropout_p=dropout_p
+                )
+                model.load_state_dict(state_dict)
+
+            model = model.to(config.DEVICE)
+            model.eval()
             models.append(model)
             logger.info(f"Successfully loaded model from {path}")
         except Exception as e:
-            logger.error(f"Failed to load model from {path}. It might be incompatible or corrupt. Error: {e}")
-            logger.error("Please retrain the model, potentially with the --tune option.")
+            logger.error(f"Failed to load model from {path}. Error: {e}")
             return []
 
     if not models:
         logger.error("No models were successfully loaded. Aborting prediction.")
         return []
 
-    market_index_df = preprocessor.get_market_index()
+    if market_index_df is None:
+        logger.info("Market index not provided, calculating fresh...")
+        market_index_df = get_market_index()
     
-    all_predictions = []
+    # --- Refactoring for Shrunk Beta ---
+    intermediate_data = {}
     for market in markets:
-        X, _, scaler = preprocessor.get_processed_data(market, market_index_df)
+        df, scaler = get_intermediate_data(market, market_index_df, historical_df=historical_df)
+        if df is not None:
+            intermediate_data[market] = {'df': df, 'scaler': scaler}
+
+    if not intermediate_data:
+        logger.warning("No markets had sufficient data for pre-computation.")
+        return []
+
+    beta_series_list = [data['df']['beta'].rename(market) for market, data in intermediate_data.items()]
+    all_betas_df = pd.concat(beta_series_list, axis=1)
+    cs_beta_mean = all_betas_df.mean(axis=1)
+    logger.info("Calculated cross-sectional mean beta for shrinkage.")
+
+    all_predictions = []
+    for market, data in intermediate_data.items():
+        df = data['df']
+        scaler = data['scaler']
+
+        df['beta'] = 0.5 * df['beta'] + 0.5 * cs_beta_mean
+        df.loc[:, 'beta'] = df['beta'].fillna(0)
+
+        X, y, scaler = create_final_sequences_and_scale(df, scaler)
+        
         if X is None:
             continue
         
         last_sequence = X[-1]
         sequence_tensor = torch.FloatTensor([last_sequence]).to(config.DEVICE)
 
-        ensemble_patterns = []
-        ensemble_uncertainties = []
+        with torch.no_grad():
+            individual_patterns = []
+            for model in models:
+                model.eval()
+                predicted_pattern = model(sequence_tensor)[0].cpu().numpy()
+                individual_patterns.append(predicted_pattern)
+        
+        individual_patterns = np.array(individual_patterns)
+        final_pattern = np.mean(individual_patterns, axis=0)
+        final_uncertainty = np.sum(np.std(individual_patterns, axis=0))
 
-        for model in models:
-            model.train() # Activate dropout for MC Dropout
-            for module in model.modules():
-                if isinstance(module, torch.nn.BatchNorm1d):
-                    module.eval()
-
-            with torch.no_grad():
-                mc_predictions = []
-                for _ in range(N_INFERENCES):
-                    predicted_pattern = model(sequence_tensor)[0].cpu().numpy()
-                    mc_predictions.append(predicted_pattern)
-                
-                mc_predictions = np.array(mc_predictions)
-                mean_pattern = mc_predictions.mean(axis=0)
-                uncertainty_score = np.sum(mc_predictions.std(axis=0))
-                
-                ensemble_patterns.append(mean_pattern)
-                ensemble_uncertainties.append(uncertainty_score)
-
-        final_pattern = np.mean(ensemble_patterns, axis=0)
-        final_uncertainty = np.mean(ensemble_uncertainties)
-
-        current_price_df = database.load_data(f"SELECT close FROM crypto_data WHERE market = '{market}' ORDER BY timestamp DESC LIMIT 1")
-        if not current_price_df.empty:
-            current_price = current_price_df.iloc[0]['close']
-        else:
-            logger.warning(f"Could not retrieve current price for {market}. Skipping.")
-            continue
+        current_price = df.iloc[-1]['close']
 
         all_predictions.append({
             "market": market,
             "predicted_pattern": final_pattern,
             "uncertainty": final_uncertainty,
-            "current_price": current_price
+            "current_price": current_price,
+            "individual_patterns": individual_patterns 
         })
         logger.info(f"Ensemble prediction for {market} generated (Uncertainty: {final_uncertainty:.6f}).")
 

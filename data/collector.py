@@ -1,11 +1,12 @@
-
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
 import time
+from typing import Optional
+
 from utils.config import config
 from utils.logger import logger
-from data.database import save_data, get_db_connection
+from data.database import save_data, get_db_connection, init_db
 
 def get_last_timestamp(market: str):
     """Get the last timestamp for a given market from the database."""
@@ -25,7 +26,7 @@ def get_last_timestamp(market: str):
 def collect_market_data(market: str, days: int = 90):
     """Collects historical data for a single market from Upbit."""
     logger.info(f"Starting data collection for market: {market}")
-    url = config.UPBIT_API_URL
+    url = "https://api.upbit.com/v1/candles/minutes/60"
     last_ts = get_last_timestamp(market)
 
     if last_ts:
@@ -51,7 +52,6 @@ def collect_market_data(market: str, days: int = 90):
                 logger.info(f"No more data to fetch for {market}.")
                 break
 
-            # Filter data before appending
             if last_ts:
                 new_data = []
                 stop_collecting = False
@@ -78,7 +78,7 @@ def collect_market_data(market: str, days: int = 90):
                 break
 
             to_datetime = oldest_ts.strftime('%Y-%m-%d %H:%M:%S')
-            time.sleep(0.2)
+            time.sleep(0.5)
 
         except requests.exceptions.RequestException as e:
             logger.error(f"API request failed for {market}: {e}")
@@ -104,15 +104,45 @@ def collect_market_data(market: str, days: int = 90):
         logger.info(f"No new data collected for {market}.")
 
 
+def get_all_krw_markets():
+    """Fetches all KRW market symbols from Upbit."""
+    logger.info("Fetching all KRW market symbols from Upbit...")
+    url = "https://api.upbit.com/v1/market/all"
+    try:
+        res = requests.get(url)
+        res.raise_for_status()
+        data = res.json()
+        krw_markets = [item['market'] for item in data if item['market'].startswith('KRW-')]
+        logger.info(f"Found {len(krw_markets)} KRW markets.")
+        return krw_markets
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to fetch market list from Upbit: {e}")
+        return []
+
+def run_all(days: int = 90):
+    """Collects data for all KRW markets."""
+    init_db() # Ensure database and tables are created
+    logger.info(f"=== Starting data collection for ALL KRW markets ({days} days) ===")
+    markets = get_all_krw_markets()
+    if not markets:
+        logger.error("Could not retrieve market list. Aborting data collection.")
+        return
+
+    for i, market in enumerate(markets):
+        logger.info(f"--- Collecting market {i+1}/{len(markets)}: {market} ---")
+        collect_market_data(market, days)
+        time.sleep(1.1) # Be respectful to the API
+    logger.info("=== Full data collection finished. ===")
+
 def run(days: int = 90):
     logger.info("=== Starting Data Collection ===")
     for market in config.TARGET_MARKETS:
         collect_market_data(market, days)
     logger.info("=== Data Collection Finished ===")
 
-def get_current_price(market: str) -> float | None:
+def get_current_price(market: str) -> Optional[float]:
     """Fetches the real-time trade price for a single market from Upbit."""
-    logger.info(f"Fetching real-time price for {market}...")
+    # logger.info(f"Fetching real-time price for {market}...")
     url = "https://api.upbit.com/v1/ticker"
     params = {"markets": market}
     try:
@@ -121,7 +151,7 @@ def get_current_price(market: str) -> float | None:
         data = res.json()
         if data:
             price = data[0].get('trade_price')
-            logger.info(f"Real-time price for {market}: {price}")
+            # logger.info(f"Real-time price for {market}: {price}")
             return price
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to fetch current price for {market}: {e}")

@@ -1,7 +1,9 @@
 from utils.logger import logger
 from data import collector, database
 from training import trainer
-from inference import recommender
+from inference import recommender, predictor
+from utils.config import config
+
 
 def run_daily_pipeline():
     """
@@ -9,7 +11,8 @@ def run_daily_pipeline():
     1. Initialize DB (if not exists)
     2. Collect recent data
     3. Incrementally train/update the model
-    4. Generate and save new recommendations
+    4. Generate predictions
+    5. Generate and save new recommendations
     """
     logger.info("=========================================")
     logger.info("=== STARTING FULL DAILY PIPELINE RUN ====")
@@ -28,9 +31,13 @@ def run_daily_pipeline():
         logger.info("--- Step 3: Training/Updating Model ---")
         trainer.run()
 
-        # Step 4: Generate new recommendations
-        logger.info("--- Step 4: Generating Recommendations ---")
-        recommender.run()
+        # Step 4: Generate predictions
+        logger.info("--- Step 4: Generating Predictions ---")
+        predictions = predictor.run(markets=config.TARGET_MARKETS)
+
+        # Step 5: Generate new recommendations
+        logger.info("--- Step 5: Generating Recommendations ---")
+        recommender.run(predictions=predictions)
 
         logger.info("=======================================")
         logger.info("=== DAILY PIPELINE COMPLETED SUCCESSFULLY ===")

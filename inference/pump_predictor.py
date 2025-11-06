@@ -44,6 +44,7 @@ def run():
         df = df.iloc[::-1].reset_index(drop=True)
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         df.set_index('timestamp', inplace=True)
+        df.index = df.index.tz_localize('UTC') # Make index tz-aware (UTC)
 
         # 4. Create features
         df = df.join(market_index_df, how='left') # Join market index

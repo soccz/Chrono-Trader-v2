@@ -1,8 +1,9 @@
 import pandas as pd
 import numpy as np
-import pandas_ta as ta
+import pandas_ta_classic as ta
 from sklearn.preprocessing import MinMaxScaler
-from datetime import datetime
+from datetime import datetime, timedelta
+import os
 
 from utils.config import config
 from utils.logger import logger
@@ -11,21 +12,29 @@ from data.database import load_data, get_db_connection
 FUTURE_WINDOW_SIZE = 6
 MAJOR_COINS = ['KRW-BTC', 'KRW-ETH'] # Coins to build the market index
 
-def get_market_weights() -> dict:
+def get_market_weights(start_date=None, end_date=None) -> dict:
     """
-    Dynamically calculates market weights for major coins based on recent trading value.
+    Dynamically calculates market weights for major coins based on trading value in a given period.
     """
-    logger.info("Dynamically calculating market weights based on recent 30-day trading value...")
+    logger.info("Dynamically calculating market weights...")
     weights = {}
     total_value = 0
     
     try:
+        # Define the time window for the query
+        if end_date and start_date:
+             # Use the provided date range
+             date_filter = f"AND timestamp BETWEEN '{start_date}' AND '{end_date}'"
+        else:
+             # Default to last 30 days if no range is provided
+             date_filter = "AND timestamp >= date('now', '-30 days')"
+
         for coin in MAJOR_COINS:
             query = f"""
                 SELECT AVG(close * volume) 
                 FROM crypto_data 
                 WHERE market = '{coin}' 
-                AND timestamp >= date('now', '-30 days')
+                {date_filter}
             """
             avg_value_df = load_data(query)
             if avg_value_df.empty or avg_value_df.iloc[0, 0] is None:
@@ -50,25 +59,30 @@ def get_market_weights() -> dict:
     logger.warning("Using default market cap weights (70/30).")
     return {'KRW-BTC': 0.7, 'KRW-ETH': 0.3}
 
-def get_market_index() -> pd.DataFrame:
+def get_market_index(start_date=None, end_date=None) -> pd.DataFrame:
     """
-    Calculates a market-cap weighted market index based on major coins.
-    Weights are now calculated dynamically.
+    Calculates a market-cap weighted market index based on major coins for a given period.
     """
     logger.info(f"Calculating market index from {MAJOR_COINS}...")
     
-    # Get dynamic weights instead of using hardcoded ones
-    market_weights = get_market_weights()
+    # Pass date range to get weights for the specific period
+    market_weights = get_market_weights(start_date=start_date, end_date=end_date)
     index_df = pd.DataFrame()
     
     try:
+        # Define the time window for the query
+        if end_date and start_date:
+             date_filter = f"AND timestamp BETWEEN '{start_date}' AND '{end_date}'"
+        else:
+             date_filter = "" # No filter, get all data
+
         for coin in MAJOR_COINS:
-            query = f"SELECT timestamp, close FROM crypto_data WHERE market = '{coin}' ORDER BY timestamp ASC"
+            query = f"SELECT timestamp, close FROM crypto_data WHERE market = '{coin}' {date_filter} ORDER BY timestamp ASC"
             df = load_data(query)
             if df.empty:
-                logger.warning(f"No data for {coin} to calculate market index.")
+                logger.warning(f"No data for {coin} to calculate market index for the given period.")
                 continue
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize('UTC')
             df.set_index('timestamp', inplace=True)
             df[f'{coin}_pct_change'] = df['close'].pct_change()
             
@@ -77,16 +91,18 @@ def get_market_index() -> pd.DataFrame:
             else:
                 index_df = index_df.join(df[[f'{coin}_pct_change']], how='outer')
         
-        if index_df.empty or not all(f'{c}_pct_change' in index_df.columns for c in MAJOR_COINS):
-            logger.warning("Could not calculate market index, data missing for major coins.")
+        if index_df.empty or not all(f'{c}_pct_change' in index_df.columns for c in MAJOR_COINS if c in market_weights):
+            logger.warning("Could not calculate market index, data missing for major coins with calculated weights.")
             return pd.DataFrame()
 
         # Fill NaNs before calculation
         index_df.fillna(0, inplace=True)
 
         # Calculate weighted average using dynamic weights
-        index_df['market_index_return'] = (index_df[f'{MAJOR_COINS[0]}_pct_change'] * market_weights[MAJOR_COINS[0]] +
-                                           index_df[f'{MAJOR_COINS[1]}_pct_change'] * market_weights[MAJOR_COINS[1]])
+        index_df['market_index_return'] = 0.0
+        for coin, weight in market_weights.items():
+             if f'{coin}_pct_change' in index_df.columns:
+                  index_df['market_index_return'] += index_df[f'{coin}_pct_change'] * weight
         
         logger.info("Market-cap weighted index calculated successfully.")
         return index_df[['market_index_return']]
@@ -111,14 +127,26 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df['macd'] = macd['MACD_12_26_9']
         df['macdsignal'] = macd['MACDs_12_26_9']
         df['macdhist'] = macd['MACDh_12_26_9']
+    else:
+        df['macd'] = 0
+        df['macdsignal'] = 0
+        df['macdhist'] = 0
+
     if adx is not None and not adx.empty:
         df['adx'] = adx['ADX_14']
+    else:
+        df['adx'] = 0
+
     df['obv'] = obv
     if bbands is not None and not bbands.empty and bbands.shape[1] >= 3:
         # Access by position for robustness against naming changes
         df['bb_lower'] = bbands.iloc[:, 0]  # Lower band
         df['bb_middle'] = bbands.iloc[:, 1] # Middle band
         df['bb_upper'] = bbands.iloc[:, 2]  # Upper band
+    else:
+        df['bb_lower'] = 0
+        df['bb_middle'] = 0
+        df['bb_upper'] = 0
 
     df['volume_ma'] = volume_ma
 
@@ -134,59 +162,92 @@ def create_sequences(data, sequence_length, future_window):
         ys.append(y)
     return np.array(xs), np.array(ys)
 
-def get_processed_data(market: str, market_index_df: pd.DataFrame):
-    """Loads, preprocesses, and prepares data, now including Alpha and Beta."""
-    logger.info(f"Processing data for market: {market}")
+def get_intermediate_data(market: str, market_index_df: pd.DataFrame, historical_df: pd.DataFrame = None):
+    """
+    Loads and preprocesses data for a market up to the point of feature calculation.
+    If historical_df is provided, it uses that dataframe; otherwise, it queries the database.
+    Ensures all timezone information is consistent (UTC) before processing.
+    """
+    logger.info(f"Processing intermediate data for market: {market}")
     
-    query = f"SELECT * FROM crypto_data WHERE market = '{market}' ORDER BY timestamp ASC"
-    df = load_data(query)
-    if df.empty:
-        logger.warning(f"No data found for market {market}. Skipping.")
-        return None, None, None
+    if historical_df is not None:
+        df = historical_df[historical_df['market'] == market].copy()
+        # The historical_df from the evaluator is already tz-aware and indexed.
+        if df.index.tz is None:
+            df.index = df.index.tz_localize('UTC')
+    else:
+        query = f"SELECT * FROM crypto_data WHERE market = '{market}' ORDER BY timestamp ASC"
+        df = load_data(query)
+        if not df.empty:
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df.set_index('timestamp', inplace=True)
+            df.index = df.index.tz_localize('UTC') # Always localize after loading
 
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
-    df.set_index('timestamp', inplace=True)
+    if df.empty or len(df) < 100:
+        logger.warning(f"Not enough data for market {market} to process (< 100 records). Skipping.")
+        return None, None
+
+    # Ensure market_index_df is also tz-aware before joining
+    if market_index_df.index.tz is None:
+        market_index_df.index = market_index_df.index.tz_localize('UTC')
 
     df = calculate_technical_indicators(df)
 
-    # Join the market-cap weighted index
+    # Now the join should be safe as both indexes are tz-aware
     df = df.join(market_index_df, how='left')
     df['market_index_return'] = df['market_index_return'].fillna(0)
 
-    # --- Calculate Alpha and Beta ---
     df['coin_return'] = df['close'].pct_change().fillna(0)
-    beta_window = 30 # 30-hour rolling window for beta calculation
-
-    # Rolling covariance between coin and market
-    rolling_cov = df['coin_return'].rolling(window=beta_window).cov(df['market_index_return'])
-    # Rolling variance of the market
-    rolling_var = df['market_index_return'].rolling(window=beta_window).var()
-
-    df['beta'] = (rolling_cov / rolling_var).fillna(0)
+    beta_span = 720
+    ewm_cov = df['coin_return'].ewm(span=beta_span, adjust=False).cov(df['market_index_return'])
+    ewm_var = df['market_index_return'].ewm(span=beta_span, adjust=False).var()
+    df['beta'] = (ewm_cov / ewm_var).fillna(0).clip(-3, 3)
     df['alpha'] = (df['coin_return'] - (df['beta'] * df['market_index_return'])).fillna(0)
-    # --- End Alpha and Beta Calculation ---
 
     df['future_pct_change'] = (df['close'].shift(-1) - df['close']) / df['close']
     df.fillna(0, inplace=True)
+    
+    scaler = MinMaxScaler()
 
+    return df, scaler
+
+def create_final_sequences_and_scale(df: pd.DataFrame, scaler: MinMaxScaler):
+    """
+    Takes a dataframe with all features, scales them, and creates sequences.
+    """
     features_to_scale = [
         'close', 'volume', 'rsi', 'macd', 'macdsignal', 'macdhist', 'adx', 'obv', 
         'market_index_return', 'bb_upper', 'bb_middle', 'bb_lower', 'volume_ma',
-        'alpha', 'beta' # Add new features
+        'alpha', 'beta'
     ]
     
-    scaler = MinMaxScaler()
+    features_to_scale = [f for f in features_to_scale if f in df.columns]
+
     scaled_features = scaler.fit_transform(df[features_to_scale])
 
     data_for_sequences = np.c_[df[['future_pct_change']], scaled_features]
 
     X, y = create_sequences(data_for_sequences, config.SEQUENCE_LENGTH, FUTURE_WINDOW_SIZE)
     
+    if X.shape[0] == 0:
+        logger.warning(f"Not enough data to create any sequences after processing. Skipping.")
+        return None, None, None
+
     X = X[:, :, 1:]
 
-    logger.info(f"Data processing complete for {market}. Shape of X: {X.shape}, Shape of y: {y.shape}")
+    logger.info(f"Data scaling and sequencing complete. Shape of X: {X.shape}, Shape of y: {y.shape}")
     
     return X, y, scaler
+
+def get_processed_data_for_training(market: str, market_index_df: pd.DataFrame):
+    """Wrapper function for training that calls the refactored processing steps."""
+    # Pass historical_df=None to ensure it queries the DB for fresh training data
+    df, scaler = get_intermediate_data(market, market_index_df, historical_df=None)
+    if df is None:
+        return None, None, None
+    
+    # For training, we don't apply shrinkage, so we pass the df directly
+    return create_final_sequences_and_scale(df, scaler)
 
 def get_recent_pattern(market: str, current_time: datetime, hours: int = 24) -> np.ndarray:
     """
@@ -211,6 +272,58 @@ def get_recent_pattern(market: str, current_time: datetime, hours: int = 24) -> 
         return np.array([])
 
     return pattern # Return the 'hours' percentage changes
+
+def get_historical_success_patterns(
+    cache_path="data/success_patterns.npy",
+    recalculate=False,
+    window_size=6,
+    min_return=0.15
+):
+    """
+    Finds and caches historical price patterns that led to significant returns.
+    A "success pattern" is defined as a sequence of `window_size` hourly returns
+    that resulted in a total return of at least `min_return`.
+    """
+    if os.path.exists(cache_path) and not recalculate:
+        logger.info(f"Loading cached success patterns from {cache_path}")
+        return np.load(cache_path)
+
+    logger.info("Calculating and caching historical success patterns...")
+    all_markets_df = load_data("SELECT DISTINCT market FROM crypto_data WHERE market LIKE 'KRW-%'")
+    all_markets = all_markets_df['market'].tolist() if not all_markets_df.empty else []
+    
+    success_patterns = []
+
+    for market in all_markets:
+        query = f"SELECT timestamp, close FROM crypto_data WHERE market = '{market}' ORDER BY timestamp ASC"
+        df = load_data(query)
+        
+        if len(df) < window_size:
+            continue
+
+        df['coin_return'] = df['close'].pct_change()
+        df['future_window_return'] = (df['close'].shift(-window_size) / df['close']) - 1
+        
+        success_indices = df[df['future_window_return'] >= min_return].index
+        
+        for index in success_indices:
+            try:
+                start_idx = df.index.get_loc(index)
+                pattern = df.iloc[start_idx : start_idx + window_size]['coin_return'].values
+                if len(pattern) == window_size and not np.isnan(pattern).any():
+                    success_patterns.append(pattern)
+            except KeyError:
+                continue
+
+    if not success_patterns:
+        logger.warning("No historical success patterns found. DTW filter will be ineffective.")
+        return np.array([])
+
+    patterns_array = np.array(success_patterns)
+    np.save(cache_path, patterns_array)
+    logger.info(f"Found and cached {len(patterns_array)} success patterns to {cache_path}")
+    
+    return patterns_array
 
 # --- Functions for Pump Prediction Dataset ---
 
@@ -290,10 +403,11 @@ def get_pump_dataset(days: int = None):
         if df.empty or len(df) < 100: # Need enough data for rolling windows
             continue
 
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize('UTC')
         df.set_index('timestamp', inplace=True)
 
         # Join the market index here
+        # Both dataframes must be tz-aware for the join.
         df = df.join(market_index_df, how='left')
         df['market_index_return'] = df['market_index_return'].fillna(0)
 

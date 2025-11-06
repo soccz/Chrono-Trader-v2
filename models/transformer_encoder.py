@@ -45,10 +45,11 @@ class TransformerEncoder(nn.Module):
         # output shape: (batch_size, seq_len, d_model)
         return output
 
-def build_transformer_encoder(input_dim, d_model, n_heads, n_layers):
+def build_transformer_encoder(input_dim, d_model, n_heads, n_layers, dropout_p):
     return TransformerEncoder(
         input_dim=input_dim,
         d_model=d_model,
         n_heads=n_heads,
-        n_layers=n_layers
+        n_layers=n_layers,
+        dropout=dropout_p
     )
