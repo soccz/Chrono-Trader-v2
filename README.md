@@ -48,7 +48,15 @@ python main.py --mode train --tune
 
 ---
 
-## 3. Standard Development Workflow
+## 3. Usage
+
+For detailed instructions on how to use the different command-line modes (`daily`, `train`, `backtest`, etc.), please refer to the new guide:
+
+**[➡️ Chrono-Trader Usage Guide](./USAGE_GUIDE.md)**
+
+---
+
+## 4. Standard Development Workflow
 
 After the initial tuning is complete, all future model improvements (e.g., adding new assets, changing model architecture) should follow this cycle to ensure rigorous, quantitative evaluation.
 
@@ -60,7 +68,7 @@ After the initial tuning is complete, all future model improvements (e.g., addin
 
 ---
 
-## 4. Long-Term Improvement Roadmap
+## 5. Long-Term Improvement Roadmap
 
 Once a satisfactory v2.1 baseline is established post-tuning, the following long-term enhancements can be pursued.
 

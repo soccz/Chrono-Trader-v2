@@ -10,193 +10,156 @@ from data.collector import get_current_price
 from data.preprocessor import get_historical_success_patterns
 from inference.predictor import get_pattern_similarity
 
+def _log_recommendation_table(stage_name: str, trades: list):
+    """Helper function to log the state of trades at each funnel step in a detailed table."""
+    logger.info(f"\n--- {stage_name} ({len(trades)} candidates) ---")
+    if not trades:
+        logger.info("  No candidates to display.")
+        return
+
+    # Sort by confidence for consistent logging
+    sorted_trades = sorted(trades, key=lambda x: x.get('confidence', 0), reverse=True)
+    
+    headers = ["Market", "Signal", "Strategy", "Exp. (6H)", "Conf.", "H+1", "H+2", "H+3", "H+4", "H+5", "H+6", "Status"]
+    
+    # Dynamically calculate column widths
+    col_widths = {h: len(h) for h in headers}
+    for trade in sorted_trades:
+        col_widths["Market"] = max(col_widths["Market"], len(trade.get('market', '')))
+        col_widths["Strategy"] = max(col_widths["Strategy"], len(trade.get('strategy', '')))
+        col_widths["Signal"] = max(col_widths["Signal"], len(trade.get('signal', '')))
+    
+    # Set fixed widths for numeric/status columns
+    col_widths["Market"] = max(col_widths["Market"], 6) + 2
+    col_widths["Signal"] = max(col_widths["Signal"], 6) + 2
+    col_widths["Strategy"] = max(col_widths["Strategy"], 8) + 2
+    col_widths["Exp. (6H)"] = 11
+    col_widths["Conf."] = 8
+    for i in range(1, 7):
+        col_widths[f"H+{i}"] = 8
+    col_widths["Status"] = 45
+
+    # Print Header
+    header_line = " | ".join([f"{h:<{col_widths[h]}}" for h in headers])
+    separator = "-+-".join(["-" * col_widths[h] for h in headers])
+    logger.info(header_line)
+    logger.info(separator)
+
+    # Print Rows
+    for trade in sorted_trades:
+        status_color = "\033[92m" if trade['status'] == 'Recommended' else "\033[91m" if 'Failed' in trade['status'] else "\033[0m"
+        
+        pattern_cols = " | ".join([f"{p:>+7.2%}" for p in trade['pattern']])
+
+        row_str = f"{trade['market']:<{col_widths['Market']}} | " \
+                  f"{trade.get('signal', 'N/A'):<{col_widths['Signal']}} | " \
+                  f"{trade['strategy']:<{col_widths['Strategy']}} | " \
+                  f"{trade['expected_return']:>+10.2%} | " \
+                  f"{trade['confidence']:>7.2%} | " \
+                  f"{pattern_cols} | " \
+                  f"{status_color}{trade['status']:<{col_widths['Status']}}\033[0m"
+        logger.info(row_str)
+
+
 def run(predictions: list, historical_data: pd.DataFrame = None, mode: str = 'live'):
-    """Analyzes predictions and uncertainty to generate user-friendly recommendations."""
-    logger.info("=== Starting Recommendation Generation (Ensembled + User-Friendly) ===")
+    """
+    Analyzes predictions through a multi-stage filtering funnel and presents
+    a clear, visual table of the entire process.
+    """
+    logger.info("=== Starting Recommendation Generation Funnel ===")
     
     if not predictions:
         logger.warning("Recommender received no predictions to analyze.")
         return []
 
-    if historical_data is not None:
-        if not isinstance(historical_data.index, pd.DatetimeIndex):
-            historical_data = historical_data.copy()
-            historical_data.index = pd.to_datetime(historical_data.index, utc=True, errors='coerce')
-        current_time = historical_data.index.max()
-        if pd.isna(current_time):
-            logger.warning("Historical data index did not yield a valid timestamp; falling back to current UTC time.")
-            current_time = datetime.now(timezone.utc)
-    else:
-        current_time = datetime.now(timezone.utc)
-
-    # Load historical success patterns for DTW comparison
-    success_patterns = get_historical_success_patterns()
-
-    logger.info(f"[Funnel] Step 2 (Predictor): Received {len(predictions)} initial predictions.")
-
-    # --- Liquidity Filter (Q8) ---
-    all_markets = list(set(p['market'] for p in predictions))
-    trading_values = get_trading_values_for_markets(all_markets, end_time=current_time, hours=24)
-    
-    threshold = config.LIQUIDITY_THRESHOLDS.get(mode, config.LIQUIDITY_THRESHOLDS['live'])
-    logger.info(f"Applying liquidity filter (mode: {mode}, threshold: {threshold:,.0f} KRW)")
-
-    initial_pred_count = len(predictions)
-    liquid_predictions = []
-    for pred in predictions:
-        market_value = trading_values.get(pred['market'], 0)
-        if market_value >= threshold:
-            liquid_predictions.append(pred)
-        else:
-            logger.info(f"[Liquidity Filter] Filtering out {pred['market']} (24h value: {market_value:,.0f} KRW < {threshold:,.0f} KRW)")
-    
-    if len(liquid_predictions) < initial_pred_count:
-        logger.info(f"Filtered out {initial_pred_count - len(liquid_predictions)} predictions due to low liquidity.")
-    
-    logger.info(f"[Funnel] Step 3 (Liquidity Filter): {len(liquid_predictions)} predictions remaining.")
-    
-    predictions = liquid_predictions
-    if not predictions:
-        logger.warning("No liquid predictions remaining after filtering.")
-        return []
-    # --- End Liquidity Filter ---
-
-    potential_trades = []
+    # --- [Step 1] Initial Predictions ---
+    funnel_data = []
     for pred in predictions:
         current_price = pred.get('current_price')
-        if current_price is None or current_price <= 0:
-            logger.info(f"Skipping {pred['market']} due to invalid current price: {current_price}")
-            continue
-
+        if current_price is None or current_price <= 0: continue
         pattern = pred['predicted_pattern']
-        total_change_sum = float(np.sum(pattern))
-        compounded_return = float(np.prod(1 + pattern) - 1)
-        confidence = 1 / (1 + pred['uncertainty'])
+        expected_return = float(np.prod(1 + pattern) - 1) # Calculate expected return here
+        
+        # Assign signal unconditionally at the start
+        signal = 'Long' if expected_return > 0 else ('Short' if expected_return < 0 else 'Neutral')
 
-        potential_trades.append({
+        funnel_data.append({
             'market': pred['market'],
-            'potential': compounded_return,
-            'expected_return': compounded_return,
-            'raw_sum_return': total_change_sum,
-            'pattern': pattern,
-            'confidence': confidence,
+            'expected_return': expected_return,
+            'confidence': 1 / (1 + pred['uncertainty']),
             'uncertainty': pred['uncertainty'],
             'current_price': current_price,
-            'strategy': pred.get('strategy', 'trending')
+            'strategy': pred.get('strategy', 'trending'),
+            'pattern': pattern,
+            'status': 'Initial Candidate',
+            'dtw_distance': 999.0,
+            'signal': signal # Assign signal here
         })
 
-    # --- Minimum Expected Return Filtering ---
-    min_signal_return = getattr(config, 'MIN_SIGNAL_RETURN', 0.0)
-    return_filtered_trades = []
-    dropped_for_return = 0
-    for trade in potential_trades:
-        expected_return = trade['expected_return']
-        if expected_return >= min_signal_return:
-            trade['signal'] = 'Long'
-        elif expected_return <= -min_signal_return:
-            trade['signal'] = 'Short'
-        else:
-            dropped_for_return += 1
-            continue
-        return_filtered_trades.append(trade)
+    _log_recommendation_table("[Funnel Step 1] Initial Predictions", funnel_data)
 
-    if dropped_for_return > 0:
-        logger.info(f"Filtered out {dropped_for_return} candidates due to low expected return (< {min_signal_return:.2%}).")
-
-    potential_trades = return_filtered_trades
-    if not potential_trades:
-        logger.warning("No trades remained after expected return filtering.")
-        return []
-    # --- End Minimum Expected Return Filtering ---
-
-    # --- Uncertainty Filtering ---
-    initial_count = len(potential_trades)
-    uncertainty_threshold = config.UNCERTAINTY_THRESHOLD
-    filtered_trades = [t for t in potential_trades if t['uncertainty'] <= uncertainty_threshold]
-    if len(filtered_trades) < initial_count:
-        logger.info(f"Filtered out {initial_count - len(filtered_trades)} recommendations due to high uncertainty (> {uncertainty_threshold}).")
+    # --- [Step 2] Liquidity Filter ---
+    all_markets = [p['market'] for p in funnel_data]
+    current_time = datetime.now(timezone.utc)
+    trading_values = get_trading_values_for_markets(all_markets, end_time=current_time, hours=24)
+    threshold = config.LIQUIDITY_THRESHOLDS.get(mode, config.LIQUIDITY_THRESHOLDS['live'])
     
-    logger.info(f"[Funnel] Step 4 (Uncertainty Filter): {len(filtered_trades)} predictions remaining.")
-    # --------------------------
+    for trade in funnel_data:
+        if trade['status'] == 'Initial Candidate': # Only process candidates that passed previous filters
+            market_value = trading_values.get(trade['market'], 0)
+            if market_value < threshold:
+                trade['status'] = f"Failed: Low Liquidity"
 
-    # --- DTW Pattern Filtering (Q3) ---
-    initial_count = len(filtered_trades)
-    dtw_filtered_trades = []
+    _log_recommendation_table(f"[Funnel Step 2] After Liquidity Filter", [t for t in funnel_data if t['status'] == 'Initial Candidate' or 'Failed: Low Liquidity' in t['status']])
+
+    # --- [Step 3] Minimum Expected Return Filtering ---
+    min_signal_return = getattr(config, 'MIN_SIGNAL_RETURN', 0.02)
+    for trade in funnel_data:
+        if trade['status'] == 'Initial Candidate': # Still an active candidate
+            # Signal is already assigned, just check status
+            if abs(trade['expected_return']) < min_signal_return:
+                trade['status'] = f"Failed: Low Return"
+    
+    _log_recommendation_table(f"[Funnel Step 3] After Expected Return Filter", [t for t in funnel_data if t['status'] == 'Initial Candidate' or 'Failed: Low Return' in t['status']])
+
+    # --- [Step 4] Uncertainty Filtering ---
+    uncertainty_threshold = config.UNCERTAINTY_THRESHOLD
+    for trade in funnel_data:
+        if trade['status'] == 'Initial Candidate': # Still an active candidate
+            if trade['uncertainty'] > uncertainty_threshold:
+                trade['status'] = f"Failed: High Uncertainty"
+
+    _log_recommendation_table(f"[Funnel Step 4] After Uncertainty Filter", [t for t in funnel_data if t['status'] == 'Initial Candidate' or 'Failed: High Uncertainty' in t['status']])
+
+    # --- [Step 5] DTW Pattern Filtering ---
+    success_patterns = get_historical_success_patterns()
     if success_patterns.any():
-        for trade in filtered_trades:
-            predicted_pattern = trade['pattern']
-            min_dist = min([get_pattern_similarity(predicted_pattern, success_pattern) for success_pattern in success_patterns])
-            trade['dtw_distance'] = min_dist
-            if min_dist < config.DTW_THRESHOLD:
-                dtw_filtered_trades.append(trade)
-            else:
-                logger.info(f"[DTW Filter] Filtering out {trade['market']} (DTW distance: {min_dist:.4f} >= {config.DTW_THRESHOLD})")
+        for trade in funnel_data:
+            if trade['status'] == 'Initial Candidate':
+                min_dist = min([get_pattern_similarity(trade['pattern'], sp) for sp in success_patterns])
+                trade['dtw_distance'] = min_dist
+                if min_dist >= config.DTW_THRESHOLD:
+                    trade['status'] = f"Failed: Low Similarity"
     else:
         logger.warning("No success patterns loaded, skipping DTW filter.")
-        dtw_filtered_trades = filtered_trades
 
-    if len(dtw_filtered_trades) < initial_count:
-        logger.info(f"Filtered out {initial_count - len(dtw_filtered_trades)} recommendations due to low DTW similarity.")
+    _log_recommendation_table(f"[Funnel Step 5] After DTW Filter", [t for t in funnel_data if t['status'] == 'Initial Candidate' or 'Failed: Low Similarity' in t['status']])
+    
+    # --- Final Status Update & Logging ---
+    final_recommendations = []
+    for trade in funnel_data:
+        if trade['status'] == 'Initial Candidate':
+            trade['status'] = 'Recommended'
+            final_recommendations.append(trade)
 
-    logger.info(f"[Funnel] Step 5 (DTW Filter): {len(dtw_filtered_trades)} predictions remaining.")
-    # --- End DTW Filter ---
-
-    trending_trades = [t for t in dtw_filtered_trades if t['strategy'] == 'trending']
-    pattern_trades = [t for t in dtw_filtered_trades if t['strategy'] == 'pattern']
-
-    trending_trades.sort(key=lambda x: x['confidence'], reverse=True)
-    top_trending = trending_trades[:5]
-
-    pattern_trades.sort(key=lambda x: x['confidence'], reverse=True)
-
-    top_trades = top_trending + pattern_trades
-    top_trades.sort(key=lambda x: (x['confidence'], abs(x['potential'])), reverse=True)
-
-    df_to_save = []
-    logger.info(f"\n=== 상세 암호화폐 거래 추천 [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ===")
-    logger.info(f"분석된 유망 코인 수: {len(predictions)}개 (유동성 필터링 후)")
-    logger.info(f"최종 추천 개수: {len(top_trades)}개 (불확실성/DTW 필터링 적용)")
-
-    for i, trade in enumerate(top_trades):
-        signal_type = trade.get('signal')
-        if not signal_type:
-            signal_type = "Long" if trade['potential'] > 0 else "Short"
-        signal = f"{signal_type} (매수)" if signal_type == "Long" else f"{signal_type} (매도)"
+    if final_recommendations:
+        _log_recommendation_table("Final Recommendations", final_recommendations)
         
-        live_price = get_current_price(trade['market'])
-        entry_price = live_price if live_price is not None else trade['current_price']
-        if entry_price is None or entry_price <= 0:
-            entry_price = trade['current_price']
-
-        trade_data = trade.copy()
-        trade_data['signal'] = signal_type
-        trade_data['current_price'] = entry_price
-        trade_data['predicted_pattern'] = trade['pattern']
-        df_to_save.append(trade_data)
-
-        logger.info(f"\n--- {i+1}. {trade['market']} ({trade['strategy'].upper()}) ---")
-        logger.info(f"*   추천 신호: {signal}")
-        if entry_price < 1:
-            logger.info(f"*   현재 가격: {entry_price:,.4f}원")
-        else:
-            logger.info(f"*   현재 가격: {entry_price:,.0f}원")
-        logger.info(f"*   신뢰도: {trade['confidence']:.2%}")
-        if 'dtw_distance' in trade:
-            logger.info(f"*   유사도(DTW): {trade['dtw_distance']:.4f}")
-        logger.info("*   [시스템 출력 1] 시간별 예상 등락률:")
-        for hour, p_val in enumerate(trade['pattern']):
-            logger.info(f"    *   {hour+1}시간 후: {p_val:+.2%}")
-        logger.info("*   [시스템 출력 2] 종합 예상 수익률 (6시간 합산):")
-        logger.info(f"    *   {trade['potential']:.2%}")
-
-    if df_to_save:
-        df = pd.DataFrame(df_to_save)
-        if 'pattern' in df.columns:
-            df['pattern'] = df['pattern'].apply(lambda p: ','.join([f'{x:.4f}' for x in p]))
+        # --- Save to CSV ---
+        df = pd.DataFrame(final_recommendations)
+        df['pattern'] = df['pattern'].apply(lambda p: ','.join([f'{x:+.4f}' for x in p])) # Save pattern as string
         
-        # Define columns to save
-        cols_to_save = ['market', 'signal', 'strategy', 'expected_return', 'potential', 'confidence', 'dtw_distance', 'current_price', 'pattern']
-        # Filter columns that actually exist in the dataframe
+        cols_to_save = ['market', 'signal', 'strategy', 'expected_return', 'confidence', 'dtw_distance', 'current_price', 'pattern']
         df = df[[c for c in cols_to_save if c in df.columns]]
 
         output_dir = 'recommendations'
@@ -208,6 +171,8 @@ def run(predictions: list, historical_data: pd.DataFrame = None, mode: str = 'li
             logger.info(f"Recommendations successfully saved to {filename}")
         except Exception as e:
             logger.error(f"Failed to save recommendations to CSV: {e}")
+    else:
+        logger.warning("No recommendations remained after all filtering stages.")
 
     logger.info("======================================================")
-    return df_to_save
+    return final_recommendations

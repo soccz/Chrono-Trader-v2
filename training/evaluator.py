@@ -125,14 +125,14 @@ def run(days_to_backtest: int = 10):
     
     # Simplified PnL for overall metrics (assumes equal weight, no compounding for clarity)
     pnl = results_df.apply(lambda row: row['actual_return'] if row['correct'] else -abs(row['actual_return']), axis=1)
-    total_return_pct = pnl.sum() * 100 / len(results_df) # More like avg return per trade
     sharpe_ratio = (pnl.mean() / (pnl.std() + 1e-9)) * np.sqrt(365*4) # Annualized for 6-hour trades
     win_rate = results_df['correct'].mean() * 100
     
-    # Simplified Drawdown
-    cumulative_return = pnl.cumsum()
-    rolling_max = cumulative_return.cummax()
-    drawdown = (cumulative_return - rolling_max)
+    # Corrected Drawdown Calculation
+    # Create a series of portfolio values by compounding returns
+    portfolio_value_series = (1 + pnl).cumprod() * INITIAL_BALANCE
+    rolling_max = portfolio_value_series.cummax()
+    drawdown = (portfolio_value_series - rolling_max) / rolling_max
     max_drawdown_pct = (drawdown.min() * 100) if not drawdown.empty else 0
 
     logger.info("\n--- Backtest Results ---")

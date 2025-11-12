@@ -210,14 +210,15 @@ def objective(trial, X, y):
 
     return average_correlation
 
-def run(markets: list = None, tune: bool = False):
+def run(markets: list = None, tune: bool = False, epochs: int = None):
     config_path = os.path.join("models", "model_config.json")
     if os.path.exists(config_path) and not tune:
         logger.info(f"Loading model configuration from {config_path}")
         with open(config_path, 'r') as f:
             best_params = json.load(f)
             # --- Remap Optuna params to config for actual training ---
-            config.LEARNING_RATE = best_params.get('lr', config.LEARNING_RATE)
+            config.LEARNING_RATE_G = best_params.get('lr_g', config.LEARNING_RATE_G)
+            config.LEARNING_RATE_C = best_params.get('lr_c', config.LEARNING_RATE_C)
             config.D_MODEL = best_params.get('d_model', config.D_MODEL)
             config.N_LAYERS = best_params.get('n_layers', config.N_LAYERS)
             config.N_HEADS = best_params.get('n_heads', config.N_HEADS)
@@ -249,7 +250,8 @@ def run(markets: list = None, tune: bool = False):
         logger.info(f"Best parameters saved to {config_path}")
 
         # --- Remap Optuna params to config for the rest of the run ---
-        config.LEARNING_RATE = best_params['lr']
+        config.LEARNING_RATE_G = best_params['lr_g']
+        config.LEARNING_RATE_C = best_params['lr_c']
         config.D_MODEL = best_params['d_model']
         config.N_LAYERS = best_params['n_layers']
         config.N_HEADS = best_params['n_heads']
@@ -273,7 +275,7 @@ def run(markets: list = None, tune: bool = False):
             if X_market is not None: X_list.append(X_market); y_list.append(y_market)
         if not X_list: logger.error("No data for fine-tuning."); return
         X, y = np.concatenate(X_list, axis=0), np.concatenate(y_list, axis=0)
-        epochs, lr = config.EPOCHS // 5, config.LEARNING_RATE / 10
+        lr = config.LEARNING_RATE_G / 10
     else: # Full Training on all target markets
         logger.info(f"Starting full training data assembly for markets: {config.TARGET_MARKETS}")
         X_list, y_list = [], []
@@ -289,7 +291,11 @@ def run(markets: list = None, tune: bool = False):
 
         X, y = np.concatenate(X_list, axis=0), np.concatenate(y_list, axis=0)
         logger.info(f"Assembled full training dataset with shape X: {X.shape}, y: {y.shape}")
-        epochs, lr = config.EPOCHS, config.LEARNING_RATE_G
+        lr = config.LEARNING_RATE_G
+
+    # If epochs is not passed as an argument, use config defaults
+    if epochs is None:
+        epochs = config.EPOCHS
 
     for i in range(config.N_ENSEMBLE_MODELS):
         logger.info(f"\n--- Training Ensemble Model {i+1}/{config.N_ENSEMBLE_MODELS} ---")

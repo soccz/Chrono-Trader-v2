@@ -119,6 +119,7 @@ def main():
     parser.add_argument('--days', type=int, default=30, help="Number of days for data collection or backtesting.")
     parser.add_argument('--symbol', type=str, help="A specific crypto symbol to predict (e.g., KRW-BTC).")
     parser.add_argument('--tune', action='store_true', help="Enable hyperparameter tuning during training.")
+    parser.add_argument('--daily_epochs', type=int, default=2, help="Number of epochs for daily fine-tuning.")
     
     # Arguments with defaults from config
     parser.add_argument('--model_path', type=str, default=config.MODEL_PATH, help="Path to the model file for analysis.")
@@ -185,7 +186,7 @@ def main():
                 collector.collect_market_data(market, days=30)
                 time.sleep(0.5)
             logger.info("Fine-tuning main trend model...")
-            trainer.run(markets=trending_markets)
+            trainer.run(markets=trending_markets, epochs=args.daily_epochs)
             logger.info("Fine-tuning pump prediction model...")
             pump_trainer.run()
             logger.info("--- Running Main Trend Prediction Module ---")

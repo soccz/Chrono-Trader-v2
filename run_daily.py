@@ -29,7 +29,7 @@ def run_daily_pipeline():
 
         # Step 3: Update model with new data
         logger.info("--- Step 3: Training/Updating Model ---")
-        trainer.run()
+        trainer.run(markets=config.TARGET_MARKETS)
 
         # Step 4: Generate predictions
         logger.info("--- Step 4: Generating Predictions ---")
