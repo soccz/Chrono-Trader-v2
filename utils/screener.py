@@ -18,7 +18,7 @@ def get_trending_markets(historical_df: pd.DataFrame = None, current_time: datet
     logger.info(f"--- Starting Market Screening (mode: {mode}, last {lookback_days} days) ---")
     
     # Use the mode-specific threshold from config, with a fallback to 'live'
-    threshold = config.LIQUIDITY_THRESHOLDS.get(mode, config.LIQUIDITY_THRESHOLDS['live'])
+    threshold = config.Recommender.LIQUIDITY_THRESHOLDS.get(mode, config.Recommender.LIQUIDITY_THRESHOLDS['live'])
     logger.info(f"Applying liquidity threshold: {threshold:,.0f} KRW")
 
     if historical_df is not None:

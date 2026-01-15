@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 def get_db_connection():
     """Creates a database connection using the path from the config."""
-    conn = sqlite3.connect(config.DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(config.General.DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -97,7 +97,7 @@ def get_data_period() -> int:
     logger.warning("Could not determine data period. Defaulting to 0.")
     return 0
 
-def get_trading_values_for_markets(markets: list, end_time: datetime, hours: int = 24) -> dict:
+def get_trading_values_for_markets(markets: list, end_time: datetime, hours: int = config.Recommender.LIQUIDITY_LOOKBACK_HOURS) -> dict:
     """
     Calculates the total trading value (SUM of close * volume) for a list of markets
     over a recent period ending at `end_time`.

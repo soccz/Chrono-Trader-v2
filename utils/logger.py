@@ -7,10 +7,10 @@ from .config import config
 
 def setup_logger():
     """Set up the logger for the project."""
-    if not os.path.exists(config.LOG_DIR):
-        os.makedirs(config.LOG_DIR)
+    if not os.path.exists(config.General.LOG_DIR):
+        os.makedirs(config.General.LOG_DIR)
 
-    log_file = os.path.join(config.LOG_DIR, f"crypto_predictor_{datetime.now().strftime('%Y-%m-%d')}.log")
+    log_file = os.path.join(config.General.LOG_DIR, f"crypto_predictor_{datetime.now().strftime('%Y-%m-%d')}.log")
 
     logger = logging.getLogger("CryptoPredictor")
     logger.setLevel(logging.INFO)

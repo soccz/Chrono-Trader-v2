@@ -9,7 +9,14 @@ This document outlines the strategic roadmap for Chrono-Trader v2. The project h
 ### 1.1. Current Baseline Model
 
 -   **Training Data:** 365 days of hourly data for `KRW-BTC` and `KRW-ETH`.
--   **Architecture:** Ensemble of GAN-Transformer models using hyperparameters from `models/model_config.json`.
+-   **Architecture:** Ensemble of 5 hybrid GAN-Transformer models with:
+    -   **Contextual Positional Encoding** (market index + historical similarity)
+    -   **Explainable Gated Fusion** with 16 learned prototypes
+    -   **TCN/GAF CNN** for local pattern recognition
+    -   **WGAN-GP** with MC Dropout for uncertainty estimation
+-   **Dual System:** 
+    -   System 1 (GAN): 6-hour trend/pattern prediction
+    -   System 2 (XGBoost): Short-term pump probability prediction
 -   **Key Logic:** Pre-trained on the combined dataset, fine-tuned on live trending markets.
 
 ### 1.2. v2.0 Performance Baseline

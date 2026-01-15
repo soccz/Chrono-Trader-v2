@@ -1,16 +1,155 @@
 import pandas as pd
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 import pandas_ta_classic as ta
 from sklearn.preprocessing import MinMaxScaler
 from datetime import datetime, timedelta
 import os
+from scipy.stats import zscore
 
 from utils.config import config
 from utils.logger import logger
 from data.database import load_data, get_db_connection
 
-FUTURE_WINDOW_SIZE = 6
-MAJOR_COINS = ['KRW-BTC', 'KRW-ETH'] # Coins to build the market index
+# --- Global cache for pattern memory bank ---
+_PATTERN_MEMORY_BANK = None
+_PATTERN_MEMORY_BANK_TIMESTAMPS = None
+
+def get_or_create_pattern_memory_bank(market_index_df: pd.DataFrame, pattern_length: int = None):
+    """
+    Creates or retrieves a cached memory bank of historical market index patterns.
+    Each pattern is a sequence of `pattern_length` market index returns.
+    Returns a tuple of (patterns_array, timestamps_array).
+    
+    This implements the "Retrieval-Augmented" concept: we store past patterns
+    so we can later find which historical period is most similar to "now".
+    """
+    global _PATTERN_MEMORY_BANK, _PATTERN_MEMORY_BANK_TIMESTAMPS
+    
+    if pattern_length is None:
+        pattern_length = config.Data.SEQUENCE_LENGTH
+    
+    # Return cached if available
+    if _PATTERN_MEMORY_BANK is not None:
+        return _PATTERN_MEMORY_BANK, _PATTERN_MEMORY_BANK_TIMESTAMPS
+    
+    logger.info(f"Creating pattern memory bank with pattern_length={pattern_length}...")
+    
+    if market_index_df.empty or 'market_index_return' not in market_index_df.columns:
+        logger.warning("Cannot create pattern memory bank: market_index_df is empty or missing column.")
+        return np.array([]), np.array([])
+    
+    returns = market_index_df['market_index_return'].values
+    timestamps = market_index_df.index.values
+    
+    patterns = []
+    pattern_timestamps = []
+    
+    # Create overlapping patterns from the index series
+    for i in range(len(returns) - pattern_length + 1):
+        pattern = returns[i:i + pattern_length]
+        if not np.isnan(pattern).any():
+            patterns.append(pattern)
+            pattern_timestamps.append(timestamps[i + pattern_length - 1])  # End timestamp of pattern
+    
+    if not patterns:
+        logger.warning("No valid patterns could be created for memory bank.")
+        return np.array([]), np.array([])
+    
+    _PATTERN_MEMORY_BANK = np.array(patterns)
+    _PATTERN_MEMORY_BANK_TIMESTAMPS = np.array(pattern_timestamps)
+    
+    logger.info(f"Pattern memory bank created with {len(patterns)} patterns.")
+    return _PATTERN_MEMORY_BANK, _PATTERN_MEMORY_BANK_TIMESTAMPS
+
+
+def calculate_historical_similarity_batch(market_values: np.ndarray, memory_bank: np.ndarray, pattern_length: int) -> np.ndarray:
+    """
+    Calculates historical similarity for the entire time series in one go using batched matrix operations.
+    
+    Args:
+        market_values (np.ndarray): 1D array of market index returns.
+        memory_bank (np.ndarray): 2D array of historical patterns (n_patterns, pattern_length).
+        pattern_length (int): Length of each pattern window.
+        
+    Returns:
+        np.ndarray: 1D array of similarity scores aligned with market_values. 
+                   First (pattern_length-1) elements will be 0.
+    """
+    n_samples = len(market_values)
+    if n_samples < pattern_length:
+        return np.zeros(n_samples)
+        
+    try:
+        # 1. Create sliding windows for the current market data
+        # shape: (n_windows, pattern_length)
+        windows = sliding_window_view(market_values, window_shape=pattern_length)
+        
+        # 2. Normalize Windows (Z-score)
+        w_mean = np.mean(windows, axis=1, keepdims=True)
+        w_std = np.std(windows, axis=1, keepdims=True)
+        
+        # Avoid division by zero
+        w_valid_mask = (w_std.squeeze() > 1e-8)
+        # We'll compute for all, but zero out invalid ones later
+        w_std[w_std < 1e-8] = 1.0 
+        
+        windows_norm = (windows - w_mean) / w_std
+        
+        # 3. Normalize Memory Bank (Z-score) - Do this once
+        b_mean = np.mean(memory_bank, axis=1, keepdims=True)
+        b_std = np.std(memory_bank, axis=1, keepdims=True)
+        
+        b_valid_mask = (b_std.squeeze() > 1e-8)
+        
+        # Use only valid bank patterns
+        valid_bank = memory_bank[b_valid_mask]
+        valid_b_mean = b_mean[b_valid_mask]
+        valid_b_std = b_std[b_valid_mask]
+        
+        bank_norm = (valid_bank - valid_b_mean) / valid_b_std
+        
+        # 4. Compute Cosine Similarity (Matrix Multiplication)
+        # output shape: (n_windows, n_valid_bank_patterns)
+        # This is the heavy lifting: O(n_windows * n_patterns * pattern_length) optimized by BLAS
+        dot_products = np.dot(windows_norm, bank_norm.T)
+        
+        # Norms
+        # windows_norm has length sqrt(pattern_length) because it's z-scored (variance=1)
+        # Actually z-score normalization makes length = sqrt(n). 
+        # But let's compute explicitly to be safe and handle the float precision
+        w_norms = np.linalg.norm(windows_norm, axis=1, keepdims=True)
+        b_norms = np.linalg.norm(bank_norm, axis=1, keepdims=True)
+        
+        norm_products = np.dot(w_norms, b_norms.T)
+        
+        # Avoid division by zero
+        norm_products[norm_products < 1e-8] = 1.0
+        
+        similarity_matrix = dot_products / norm_products
+        
+        # 5. Get Max Similarity for each window
+        # shape: (n_windows,)
+        if similarity_matrix.shape[1] > 0:
+            max_similarities = np.max(similarity_matrix, axis=1)
+            # Map [-1, 1] to [0, 1]
+            max_similarities = (max_similarities + 1) / 2
+        else:
+            max_similarities = np.zeros(len(windows))
+            
+        # Zero out windows that had invalid std
+        max_similarities[~w_valid_mask] = 0.0
+        
+        # 6. Pad the beginning to match original length
+        # sliding_window_view reduces dimension by (pattern_length - 1)
+        padding = np.zeros(pattern_length - 1)
+        final_similarities = np.concatenate([padding, max_similarities])
+        
+        return final_similarities
+        
+    except Exception as e:
+        logger.error(f"Error in batch similarity calculation: {e}", exc_info=True)
+        return np.zeros(n_samples)
 
 def get_market_weights(start_date=None, end_date=None) -> dict:
     """
@@ -29,7 +168,7 @@ def get_market_weights(start_date=None, end_date=None) -> dict:
              # Default to last 30 days if no range is provided
              date_filter = "AND timestamp >= date('now', '-30 days')"
 
-        for coin in MAJOR_COINS:
+        for coin in config.Data.MARKET_INDEX_COINS:
             query = f"""
                 SELECT AVG(close * volume) 
                 FROM crypto_data 
@@ -63,7 +202,7 @@ def get_market_index(start_date=None, end_date=None) -> pd.DataFrame:
     """
     Calculates a market-cap weighted market index based on major coins for a given period.
     """
-    logger.info(f"Calculating market index from {MAJOR_COINS}...")
+    logger.info(f"Calculating market index from {config.Data.MARKET_INDEX_COINS}...")
     
     # Pass date range to get weights for the specific period
     market_weights = get_market_weights(start_date=start_date, end_date=end_date)
@@ -76,7 +215,7 @@ def get_market_index(start_date=None, end_date=None) -> pd.DataFrame:
         else:
              date_filter = "" # No filter, get all data
 
-        for coin in MAJOR_COINS:
+        for coin in config.Data.MARKET_INDEX_COINS:
             query = f"SELECT timestamp, close FROM crypto_data WHERE market = '{coin}' {date_filter} ORDER BY timestamp ASC"
             df = load_data(query)
             if df.empty:
@@ -91,7 +230,7 @@ def get_market_index(start_date=None, end_date=None) -> pd.DataFrame:
             else:
                 index_df = index_df.join(df[[f'{coin}_pct_change']], how='outer')
         
-        if index_df.empty or not all(f'{c}_pct_change' in index_df.columns for c in MAJOR_COINS if c in market_weights):
+        if index_df.empty or not all(f'{c}_pct_change' in index_df.columns for c in config.Data.MARKET_INDEX_COINS if c in market_weights):
             logger.warning("Could not calculate market index, data missing for major coins with calculated weights.")
             return pd.DataFrame()
 
@@ -150,6 +289,14 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     df['volume_ma'] = volume_ma
 
+    # --- Volatility Features (NEW) ---
+    # ATR proxy using close price only (true ATR needs high/low which may not always be reliable)
+    df['volatility_24h'] = df['close'].pct_change().rolling(window=24).std()
+    df['volatility_7d'] = df['close'].pct_change().rolling(window=168).std()  # 7 days * 24 hours
+    
+    # Volume volatility (sudden volume spikes indicate potential moves)
+    df['volume_volatility'] = df['volume'].pct_change().rolling(window=24).std()
+
     df.fillna(0, inplace=True)
     return df
 
@@ -204,6 +351,19 @@ def get_intermediate_data(market: str, market_index_df: pd.DataFrame, historical
     df['beta'] = (ewm_cov / ewm_var).fillna(0).clip(-3, 3)
     df['alpha'] = (df['coin_return'] - (df['beta'] * df['market_index_return'])).fillna(0)
 
+    # --- Calculate Historical Similarity (Retrieval-Augmented PE) ---
+    # Get or create the pattern memory bank from market index
+    pattern_length = config.Data.SEQUENCE_LENGTH
+    memory_bank, _ = get_or_create_pattern_memory_bank(market_index_df, pattern_length)
+    
+    # Calculate historical similarity using batch processing
+    # This replaces the slow loop with optimized matrix operations
+    market_index_values = df['market_index_return'].values
+    historical_similarities = calculate_historical_similarity_batch(market_index_values, memory_bank, pattern_length)
+    
+    df['historical_similarity'] = historical_similarities
+    logger.info(f"Historical similarity calculated. Mean: {df['historical_similarity'].mean():.4f}")
+
     df['future_pct_change'] = (df['close'].shift(-1) - df['close']) / df['close']
     df.fillna(0, inplace=True)
     
@@ -217,7 +377,9 @@ def create_final_sequences_and_scale(df: pd.DataFrame, scaler: MinMaxScaler):
     """
     features_to_scale = [
         'close', 'volume', 'rsi', 'macd', 'macdsignal', 'macdhist', 'adx', 'obv', 
-        'market_index_return', 'bb_upper', 'bb_middle', 'bb_lower', 'volume_ma',
+        'market_index_return', 'historical_similarity',  # Context features (must match config.FEATURE_COLUMNS order)
+        'bb_upper', 'bb_middle', 'bb_lower', 'volume_ma',
+        'volatility_24h', 'volatility_7d', 'volume_volatility',
         'alpha', 'beta'
     ]
     
@@ -227,7 +389,7 @@ def create_final_sequences_and_scale(df: pd.DataFrame, scaler: MinMaxScaler):
 
     data_for_sequences = np.c_[df[['future_pct_change']], scaled_features]
 
-    X, y = create_sequences(data_for_sequences, config.SEQUENCE_LENGTH, FUTURE_WINDOW_SIZE)
+    X, y = create_sequences(data_for_sequences, config.Data.SEQUENCE_LENGTH, config.Data.FUTURE_WINDOW_SIZE)
     
     if X.shape[0] == 0:
         logger.warning(f"Not enough data to create any sequences after processing. Skipping.")
@@ -249,7 +411,7 @@ def get_processed_data_for_training(market: str, market_index_df: pd.DataFrame):
     # For training, we don't apply shrinkage, so we pass the df directly
     return create_final_sequences_and_scale(df, scaler)
 
-def get_recent_pattern(market: str, current_time: datetime, hours: int = 24) -> np.ndarray:
+def get_recent_pattern(market: str, current_time: datetime, hours: int = config.Pattern.LENGTH) -> np.ndarray:
     """
     Loads recent historical data for a market and returns its price change pattern.
     Returns a 1D numpy array of percentage changes for the last 'hours' period.
@@ -275,9 +437,7 @@ def get_recent_pattern(market: str, current_time: datetime, hours: int = 24) -> 
 
 def get_historical_success_patterns(
     cache_path="data/success_patterns.npy",
-    recalculate=False,
-    window_size=6,
-    min_return=0.15
+    recalculate=False
 ):
     """
     Finds and caches historical price patterns that led to significant returns.
@@ -293,6 +453,9 @@ def get_historical_success_patterns(
     all_markets = all_markets_df['market'].tolist() if not all_markets_df.empty else []
     
     success_patterns = []
+    
+    window_size = config.Data.FUTURE_WINDOW_SIZE
+    min_return = config.Recommender.SUCCESS_PATTERN_MIN_RETURN
 
     for market in all_markets:
         query = f"SELECT timestamp, close FROM crypto_data WHERE market = '{market}' ORDER BY timestamp ASC"
@@ -331,13 +494,13 @@ def create_pump_features(df: pd.DataFrame) -> pd.DataFrame:
     """Calculates features that might indicate a future pump."""
     # Volume Spikes (volume change vs. rolling average)
     df['volume_pct_change'] = df['volume'].pct_change()
-    df['volume_spike_score'] = df['volume_pct_change'] / (df['volume_pct_change'].rolling(window=24).mean() + 1e-9)
+    df['volume_spike_score'] = df['volume_pct_change'] / (df['volume_pct_change'].rolling(window=config.Pattern.LENGTH).mean() + 1e-9)
 
     # Bollinger Band Squeeze
     if 'bb_middle' in df.columns and df['bb_middle'].notna().any():
         bb_bandwidth = (df['bb_upper'] - df['bb_lower']) / (df['bb_middle'] + 1e-9)
         # A squeeze is when the current bandwidth is at a 24-hour low
-        df['squeeze_on'] = (bb_bandwidth.rolling(window=24).min() == bb_bandwidth).astype(int)
+        df['squeeze_on'] = (bb_bandwidth.rolling(window=config.Pattern.LENGTH).min() == bb_bandwidth).astype(int)
     else:
         df['squeeze_on'] = 0
 
@@ -347,8 +510,9 @@ def create_pump_features(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
-def create_pump_labels(df: pd.DataFrame, time_horizon: int = 6) -> pd.DataFrame:
+def create_pump_labels(df: pd.DataFrame) -> pd.DataFrame:
     """Creates multi-class ground truth labels for pump events."""
+    time_horizon = config.Data.FUTURE_WINDOW_SIZE
     # Find the max high price in the next `time_horizon` hours
     future_max_high = df['high'].rolling(window=time_horizon, min_periods=1).max().shift(-time_horizon)
     
@@ -416,7 +580,7 @@ def get_pump_dataset(days: int = None):
         df = create_pump_features(df)
 
         # 2. Create the pump labels
-        df = create_pump_labels(df, time_horizon=6)
+        df = create_pump_labels(df)
 
         # 3. Select features and labels
         feature_cols = [
@@ -447,3 +611,16 @@ def get_pump_dataset(days: int = None):
     logger.info(f"Saved to {output_path}")
 
     return final_df
+
+def create_sequences_from_index(index_df: pd.DataFrame, length: int):
+    """Creates overlapping sequences from the market index return series."""
+    if index_df.empty or 'market_index_return' not in index_df.columns:
+        logger.error("Market index dataframe is empty or missing 'market_index_return' column.")
+        return np.array([])
+
+    returns = index_df['market_index_return'].values
+    sequences = []
+    for i in range(len(returns) - length + 1):
+        sequences.append(returns[i:i+length])
+    
+    return np.array(sequences)

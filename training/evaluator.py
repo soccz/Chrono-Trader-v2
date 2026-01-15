@@ -27,10 +27,10 @@ def run(days_to_backtest: int = 10):
         with open(config_path, 'r') as f:
             best_params = json.load(f)
             # Remap only architecture-related params to avoid overriding backtest-specific settings
-            config.D_MODEL = best_params.get('d_model', config.D_MODEL)
-            config.N_LAYERS = best_params.get('n_layers', config.N_LAYERS)
-            config.N_HEADS = best_params.get('n_heads', config.N_HEADS)
-            config.DROPOUT_P = best_params.get('dropout_p', config.DROPOUT_P)
+            config.Gan.D_MODEL = best_params.get('d_model', config.Gan.D_MODEL)
+            config.Gan.N_LAYERS = best_params.get('n_layers', config.Gan.N_LAYERS)
+            config.Gan.N_HEADS = best_params.get('n_heads', config.Gan.N_HEADS)
+            config.Gan.DROPOUT_P = best_params.get('dropout_p', config.Gan.DROPOUT_P)
             logger.info(f"Remapped model architecture parameters for backtest.")
     else:
         logger.warning("model_config.json not found. Backtest will use default model parameters.")
@@ -38,7 +38,7 @@ def run(days_to_backtest: int = 10):
     # 1. Pre-load all data for the entire backtest period + buffer
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=days_to_backtest)
-    data_load_start_time = start_time - timedelta(hours=config.SEQUENCE_LENGTH + 100) # Buffer for initial sequences
+    data_load_start_time = start_time - timedelta(hours=config.Data.SEQUENCE_LENGTH + 100) # Buffer for initial sequences
 
     logger.info(f"Loading all market data from {data_load_start_time} to {end_time}...")
     all_data_query = f"SELECT * FROM crypto_data WHERE timestamp >= '{data_load_start_time}' AND timestamp <= '{end_time}'"
@@ -61,7 +61,7 @@ def run(days_to_backtest: int = 10):
         current_time = start_time + timedelta(hours=hour)
 
         # Warmup check
-        if (current_time - data_load_start_time).total_seconds() / 3600 < config.SEQUENCE_LENGTH:
+        if (current_time - data_load_start_time).total_seconds() / 3600 < config.Data.SEQUENCE_LENGTH:
             if hour % 24 == 0: logger.info(f"Backtest Hour: {hour+1} | Skipping - In Warmup Period")
             portfolio_values.append(portfolio_values[-1])
             continue

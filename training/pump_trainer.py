@@ -19,7 +19,7 @@ def objective(trial, X_train, y_train, X_val, y_val):
         'num_class': 4,
         'eval_metric': 'mlogloss',
         'use_label_encoder': False,
-        'tree_method': 'hist', # Faster
+        'tree_method': 'gpu_hist', # Use GPU for training
         'n_estimators': trial.suggest_int('n_estimators', 200, 800),
         'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.2, log=True),
         'max_depth': trial.suggest_int('max_depth', 3, 10),
@@ -95,7 +95,7 @@ def run(tune: bool = False):
     logger.info("--- Training XGBoost with best parameters ---")
     final_params = {
         'objective': 'multi:softprob', 'num_class': 4, 'eval_metric': 'mlogloss',
-        'use_label_encoder': False, **params
+        'use_label_encoder': False, 'tree_method': 'gpu_hist', **params
     }
     
     model = xgb.XGBClassifier(**final_params)
