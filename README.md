@@ -37,20 +37,20 @@ Aether(Chrono-Trader v3.2)는 금융 시장의 **비마르코프적(Non-Markovia
 
 ```mermaid
 graph TD
-    Input[Market Data] --> Encoder[Contextual Transformer]
-    Input --> TCN[Dilated CNN (Local)]
+    Input["Market Data"] --> Encoder["Contextual Transformer"]
+    Input --> TCN["Dilated CNN (Local)"]
     
     Encoder --> |Global Context| Fusion
     TCN --> |Local Pattern| Fusion
     
     subgraph "Explainable Core"
-        Fusion --> Sim[Similarity Check]
-        Sim -- Compare --> Proto[Prototype Bank (16 Patterns)]
-        Proto --> Gate[Dynamic Gating]
+        Fusion --> Sim["Similarity Check"]
+        Sim -- Compare --> Proto["Prototype Bank (16 Patterns)"]
+        Proto --> Gate["Dynamic Gating"]
     end
     
-    Gate --> Decoder[GAN Generator]
-    Decoder --> Output[Price Distribution & Confidence]
+    Gate --> Decoder["GAN Generator"]
+    Decoder --> Output["Price Distribution & Confidence"]
 ```
 
 ---
