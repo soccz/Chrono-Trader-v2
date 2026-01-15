@@ -14,6 +14,11 @@
 Aether(Chrono-Trader v3.2)는 금융 시장의 **비마르코프적(Non-Markovian)** 특성을 이해하고 대응하기 위해 설계된 **설명 가능한 하이브리드 AI**입니다. 
 기존 블랙박스 모델의 한계를 극복하기 위해, 독자적인 **Contextual Architecture**를 도입하여 시장 국면(Regime)에 따라 유연하게 전략을 수정하며, 투자자에게 시각적인 판단 근거를 제시합니다.
 
+> 🎓 **더 깊이 있는 기술적 내용이 궁금하신가요?**
+>
+> [**📄 Read the Technical Whitepaper (v3.2)**](./Chrono-Trader_v2_Paper.md)
+> *상세 아키텍처, 수식, 실험 결과 분석이 포함되어 있습니다.*
+
 ## ✨ Key Features (v3.2)
 
 ### 1. 🧠 Explainable Gated Fusion
