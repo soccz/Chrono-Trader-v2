@@ -97,7 +97,9 @@ def send_alert(message, parse_mode='HTML', bypass_dedup=False):
         "disable_web_page_preview": True
     }
     try:
-        response = requests.post(url, json=payload)
+        # Never let Telegram block ops. Keep it fast-fail.
+        timeout_sec = float(os.getenv("AETHER_TG_TIMEOUT_SEC", "10") or 10)
+        response = requests.post(url, json=payload, timeout=(3.05, timeout_sec))
         if response.status_code == 200:
             print("텔레그램 알림 전송 성공")
             _save_message_hash(message)

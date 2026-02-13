@@ -1,0 +1,12 @@
+[Unit]
+Description=Run AETHER healthcheck every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+RandomizedDelaySec=30
+Unit=aether-healthcheck.service
+
+[Install]
+WantedBy=timers.target
+

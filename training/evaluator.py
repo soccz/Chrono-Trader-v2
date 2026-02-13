@@ -16,13 +16,14 @@ from analysis.validate_uncertainty import calculate_ece
 
 INITIAL_BALANCE = 10_000_000  # 1,000만원
 
-def run(days_to_backtest: int = 10) -> bool:
+def run(days_to_backtest: int = 10, stride_hours: int = 1, summary_tag: str = "") -> bool:
     """Runs a realistic, efficient backtest for the given number of days.
 
     Returns:
         bool: True if backtest produced analyzable trades, otherwise False.
     """
-    logger.info(f"=== Starting Backtest for the last {days_to_backtest} days ===")
+    stride_hours = max(1, int(stride_hours or 1))
+    logger.info(f"=== Starting Backtest for the last {days_to_backtest} days (stride={stride_hours}h) ===")
 
     # Load the model configuration to ensure consistent architecture
     config_path = os.path.join("models", "model_config.json")
@@ -63,7 +64,7 @@ def run(days_to_backtest: int = 10) -> bool:
     portfolio_values = [INITIAL_BALANCE]
     total_hours = int(days_to_backtest * 24)
 
-    for hour in tqdm(range(total_hours), desc="Backtesting Progress"):
+    for hour in tqdm(range(0, total_hours, stride_hours), desc="Backtesting Progress"):
         current_time = start_time + timedelta(hours=hour)
 
         # Warmup check
@@ -165,6 +166,7 @@ def run(days_to_backtest: int = 10) -> bool:
 
     logger.info("\n--- Backtest Results ---")
     logger.info(f"Period: {days_to_backtest} days")
+    logger.info(f"Stride: {stride_hours} hours")
     logger.info(f"Total Trades Analyzed: {len(results_df)}")
     wins = int(results_df['correct'].sum())
     losses = int(len(results_df) - wins)
@@ -203,8 +205,37 @@ def run(days_to_backtest: int = 10) -> bool:
     logger.info("============================================")
     
     # --- Export Gate Values for Paper Visualization ---
-    gate_csv_path = os.path.join("analysis", "gate_values.csv")
     os.makedirs("analysis", exist_ok=True)
+
+    # Avoid clobbering live/intraday gate_values.csv (used for dashboards).
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    tag = f"_{summary_tag}" if str(summary_tag).strip() else ""
+    gate_csv_path = os.path.join("analysis", f"backtest_gate_values{tag}_{ts}.csv")
     results_df.to_csv(gate_csv_path, index=False)
-    logger.info(f"Gate analysis data saved to {gate_csv_path} for paper figures.")
+    logger.info(f"Backtest gate analysis data saved to {gate_csv_path}")
+
+    # Write a machine-readable summary for eval pipelines.
+    summary = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "days": int(days_to_backtest),
+        "stride_hours": int(stride_hours),
+        "n_trades": int(len(results_df)),
+        "win_rate_pct": float(win_rate),
+        "avg_return_per_trade": float(pnl.mean()),
+        "sharpe_annualized": float(sharpe_ratio),
+        "max_drawdown_pct": float(max_drawdown_pct),
+        "ece": float(ece),
+        "spearman_abs_error_uncertainty": float(spearman_corr),
+        "gate_csv": gate_csv_path,
+    }
+    try:
+        latest_path = os.path.join("analysis", "backtest_summary_latest.json")
+        with open(latest_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+        run_path = os.path.join("analysis", f"backtest_summary{tag}_{ts}.json")
+        with open(run_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+        logger.info(f"Backtest summary saved to {run_path}")
+    except Exception as e:
+        logger.warning(f"Failed to write backtest summary JSON: {e}")
     return True

@@ -1,0 +1,11 @@
+[Unit]
+Description=AETHER healthcheck (alerts on missing/stale scheduled outputs)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/mnt/20t/main/gan_t
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/mnt/20t/main/gan_t
+ExecStart=/usr/bin/python3 /mnt/20t/main/gan_t/scripts/ops_healthcheck.py --send_telegram
+TimeoutStartSec=60
+

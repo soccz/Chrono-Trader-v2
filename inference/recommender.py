@@ -805,7 +805,10 @@ def run(predictions: list, historical_data: pd.DataFrame = None, mode: str = 'li
     logger.info("======================================================")
 
     # --- [NEW] Save Gate Values for Real-time Dashboard ---
+    # Backtest runs should not pollute live gate streams.
     try:
+        if mode == "backtest":
+            return final_recommendations
         # Collect gate values from ALL predictions (not just recommendations)
         gate_data = []
         current_ts = datetime.now().isoformat()
