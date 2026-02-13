@@ -1,107 +1,151 @@
-# 🌌 Chrono-Trader v3.2 (Project Aether)
+# AETHER (Chrono-Trader)
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
-[![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+Explainable, production-minded crypto forecasting and recommendation system:
+- Feature engineering for market regime + cross-sectional factors
+- Hybrid model: Transformer (global) + CNN (local) fused by an explainable gate
+- Probabilistic forecasting via GAN-style generator + uncertainty estimation
+- Scheduled ops that never hang, enforce freshness gates, degrade safely, and always emit at least one output item per run
 
-> **Explainable AI Partner for Crypto Assets**  
-> "단순한 예측을 넘어, 판단의 근거를 설명하는 차세대 퀀트 트레이딩 시스템"
+This repository is both a research sandbox and an ops-ready pipeline.
 
----
+Not financial advice.
 
-## 📖 Introduction
-Aether(Chrono-Trader v3.2)는 금융 시장의 **비마르코프적(Non-Markovian)** 특성을 이해하고 대응하기 위해 설계된 **설명 가능한 하이브리드 AI**입니다. 
-기존 블랙박스 모델의 한계를 극복하기 위해, 독자적인 **Contextual Architecture**를 도입하여 시장 국면(Regime)에 따라 유연하게 전략을 수정하며, 투자자에게 시각적인 판단 근거를 제시합니다.
+## Docs
 
-> 🎓 **더 깊이 있는 기술적 내용이 궁금하신가요?**
->
-> [**📄 Read the Technical Whitepaper (v3.2)**](./Chrono-Trader_v2_Paper.md)
-> *상세 아키텍처, 수식, 실험 결과 분석이 포함되어 있습니다.*
+- Architecture: `PROJECT_ARCHITECTURE.md`
+- Ops contract (exit codes, artifacts, freshness, MinRec): `OPS_ACCEPTANCE.md`
+- Evaluation protocol: `EVAL_PROTOCOL.md`
+- systemd scheduling: `deploy/systemd/README.md`
+- Usage (EN): `USAGE_GUIDE.md`
+- Usage (KR): `사용가이드.md`
 
-## ✨ Key Features (v3.2)
+## Architecture (High Level)
 
-### 1. 🧠 Explainable Gated Fusion
-- **Prototype Learning**: 16가지의 학습된 시장 패턴(성공/실패 프로토타입)과 현재 차트를 실시간으로 비교합니다.
-- **Visual Reasoning**: "왜 매수했는가?"에 대해 Attention Map과 유사 과거 사례를 제시하여 설명을 제공합니다.
-
-### 2. ⏳ Context-Aware Time Perception
-- **Adaptive PE**: 물리적 시간 대신, 시장 지수(Market Index)와 역사적 유사도(Historical Similarity)를 벡터화하여 시간 인코딩(Positional Encoding)에 주입합니다.
-- **Regime Detection**: 상승장/하락장/횡보장 등 시장 국면을 스스로 인지하고 포지션 비중을 동적으로 조절합니다.
-
-### 3. 🎲 Probabilistic Forecasting
-- **Uncertainty Quantification**: GAN(Generative Adversarial Networks)과 MC-Dropout을 결합하여, 단일 가격이 아닌 **미래 시나리오의 확률 분포**를 생성합니다.
-- **Risk Management**: 예측 불확실성이 높을 때는 자동으로 레버리지를 축소하고 현금 비중을 늘립니다.
-
-### 4. 🔬 Interactive Research Lab
-- **RAG System**: LLM(GPT-4)과 벡터 DB를 연동하여, 사용자가 모델과 대화하며 시장 분석 리포트를 생성할 수 있는 대화형 인터페이스를 제공합니다.
-
----
-
-## 🛠 Architecture Overview
+### End-to-End Pipeline
 
 ```mermaid
-graph TD
-    Input["Market Data"] --> Encoder["Contextual Transformer"]
-    Input --> TCN["Dilated CNN (Local)"]
-    
-    Encoder --> |Global Context| Fusion
-    TCN --> |Local Pattern| Fusion
-    
-    subgraph "Explainable Core"
-        Fusion --> Sim["Similarity Check"]
-        Sim -- Compare --> Proto["Prototype Bank (16 Patterns)"]
-        Proto --> Gate["Dynamic Gating"]
-    end
-    
-    Gate --> Decoder["GAN Generator"]
-    Decoder --> Output["Price Distribution & Confidence"]
+flowchart LR
+  Upbit[(Upbit API)] --> Collector[data/collector.py]
+  Collector --> DB[(SQLite: data/crypto_data.db)]
+
+  DB --> Preprocess[data/preprocessor.py]
+  Preprocess --> Predictor[inference/predictor.py]
+  Predictor --> Recommender[inference/recommender.py]
+  Recommender --> CSV[recommendations/*.csv]
+  Recommender --> Metrics[analysis/run_markets_metrics_*.jsonl]
+
+  Scheduler[scripts/run_scheduled.py] --> Refresh[main.py --mode refresh-db]
+  Scheduler --> Infer[main.py --mode intraday|morning-report]
+  Metrics --> Health[scripts/ops_healthcheck.py]
+  Health --> Alert[Telegram (optional)]
 ```
 
----
+### Model (Hybrid + Explainable Gate)
 
-## 🚀 Getting Started
+```mermaid
+flowchart TB
+  X[168h sequence x 27 features] --> T[Transformer Encoder]
+  X --> C[CNN stack (local patterns)]
+  T --> F[Explainable Gated Fusion]
+  C --> F
+  F --> G[Generator (GAN-style decoder)]
+  G --> Y[6-step return path + uncertainty]
+```
 
-### Prerequisites
-- Python 3.8+
-- CUDA-enabled GPU (Recommended)
+## Quickstart (Local)
 
-### Installation
+### Install
+
 ```bash
-git clone https://github.com/soccz/Chrono-Trader-v2.git
-cd Chrono-Trader-v2
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-### Usage
-**1. Daily Inference (Recommendation)**
+### Initialize DB (first time)
+
 ```bash
-python main.py --mode daily
+python main.py --mode init_db
 ```
 
-**2. Train/Retrain Model**
+### Collect data (network required)
+
 ```bash
-python main.py --mode train --tune
+python main.py --mode refresh-db --refresh_days 7
 ```
 
-**3. Run Web Dashboard**
+### Run inference (manual)
+
 ```bash
-python app.py
+python main.py --mode intraday --min_k 1 --limit 8
+python main.py --mode morning-report --min_k 1 --limit 8
 ```
 
----
+## Scheduled Ops (Production)
 
-## 📊 Performance Benchmark
-| Metric | Chrono-Trader v3.2 | Traditional LSTM |
-| :--- | :---: | :---: |
-| **Analyzed Assets** | BTC, ETH (Top 2) | BTC Only |
-| **Sharpe Ratio** | **1.35** | 0.82 |
-| **Max Drawdown** | **-12.4%** | -28.5% |
-| **Explainability** | **High (Visual)** | None (Blackbox) |
+Preferred entrypoint:
+- `scripts/run_scheduled.py`
 
----
+Preferred scheduler:
+- systemd user timers in `deploy/systemd/`
 
-## 📜 License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Why:
+- freshness gate + watch-only fallback
+- watchdog timeouts
+- overlap protection
+- minimum output guarantee (MinRec + synthetic watch-only fallback)
 
-Copyright (c) 2026 Team Aether.
+Details:
+- `OPS_ACCEPTANCE.md`
+- `deploy/systemd/README.md`
+
+## Training + Optuna (Long Runs)
+
+### Full training (no tuning)
+
+```bash
+python main.py --mode train --no_collect --offline_ok
+```
+
+### Optuna tuning (resumable via SQLite)
+
+```bash
+export AETHER_OPTUNA_TRIALS=200
+export AETHER_OPTUNA_STORAGE=sqlite:///analysis/optuna_full.db
+export AETHER_OPTUNA_STUDY_NAME=aether_optuna_full
+export AETHER_OPTUNA_LOAD_IF_EXISTS=1
+python main.py --mode train --tune --no_collect --offline_ok
+```
+
+### End-to-end long pipeline (detach)
+
+Runs:
+1) Optuna + training
+2) backtest suite
+3) (optional) ablation suite
+
+```bash
+python scripts/optuna_full_run.py --tag long --optuna_trials 200 --no_telegram --run_ablation --detach
+tail -n 200 logs/optuna_full_long_*.log
+```
+
+## Evaluation
+
+```bash
+# Backtest (main)
+python main.py --mode backtest --days 30
+
+# Suite runner (writes JSON artifacts into analysis/)
+python scripts/eval_suite.py --days 30 --stride_hours 4 --tag eval_30d_4h --no_telegram
+
+# Ablation (factors/context)
+python scripts/ablation_suite.py --days 7 --stride_hours 4 --tag abl_7d_4h --include_no_context --no_telegram
+```
+
+## Repo Layout
+
+- `main.py`: CLI entrypoint (train / refresh-db / intraday / morning-report / backtest)
+- `data/`: DB + collectors + feature engineering
+- `models/`: model definitions + ensemble configs
+- `inference/`: predictor + recommender funnel
+- `training/`: trainer + evaluator (backtest engine)
+- `scripts/`: ops runners, validation, healthcheck, eval/ablation, automation
+- `deploy/systemd/`: user timers/services for scheduled ops

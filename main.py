@@ -131,6 +131,11 @@ def main():
     parser.add_argument('--days', type=int, default=30, help="Number of days for data collection or backtesting.")
     parser.add_argument('--symbol', type=str, help="A specific crypto symbol to predict (e.g., KRW-BTC).")
     parser.add_argument('--tune', action='store_true', help="Enable hyperparameter tuning during training.")
+    parser.add_argument(
+        '--no_collect',
+        action='store_true',
+        help="For --mode train: skip network data collection and train using existing DB only."
+    )
     parser.add_argument('--daily_epochs', type=int, default=2, help="Number of epochs for daily fine-tuning.")
     parser.add_argument('--limit', type=int, default=5, help="Number of markets to screen for inference-only modes.")
     parser.add_argument('--lookback_days', type=int, default=1, help="Screening lookback days for inference-only modes.")
@@ -353,10 +358,24 @@ def main():
         logger.info(f"Data available for {days_available} days. Training will use data from the last {training_days} days.")
         # Use TRAIN_COINS for full training (top liquidity coins)
         target_markets = config.Data.TRAIN_COINS
-        for market in target_markets:
-             collector.collect_market_data(market, days=training_days)
-             time.sleep(0.5)
-        trainer.run(tune=args.tune)
+        if args.no_collect:
+            logger.warning(
+                "--no_collect enabled: skipping network data collection. "
+                "Training will rely on existing DB snapshots only."
+            )
+        else:
+            for market in target_markets:
+                try:
+                    collector.collect_market_data(market, days=training_days)
+                except Exception as e:
+                    # Keep training resilient in offline/unstable network environments.
+                    logger.error(f"collect_market_data failed for {market}: {e}")
+                    if args.offline_ok:
+                        logger.warning("--offline_ok enabled: continuing despite collection failure.")
+                        continue
+                    raise
+                time.sleep(0.5)
+        trainer.run(tune=args.tune, epochs=args.epochs)
 
     elif args.mode == 'train-pump':
         from training import pump_trainer

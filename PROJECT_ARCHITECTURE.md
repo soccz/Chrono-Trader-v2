@@ -2,7 +2,7 @@
 
 > 이 문서는 Chrono-Trader v2의 **모든 구성 요소**를 정의합니다.
 > 코드 수정 시 반드시 이 문서를 참조하고, 변경 후 동기화해야 합니다.
-> **최종 검증일**: 2026-02-12 (소스코드 전수 재검증 — 40+ 파일)
+> **최종 검증일**: 2026-02-13 (소스코드/ops 파이프라인 동기화 — 스케줄·헬스체크·eval/ablation·Optuna 영속화 포함)
 
 ---
 
@@ -595,14 +595,16 @@ while True (30분 주기):
 
 ## 14. 자동화 인프라
 
-### 14.1 Cron 스케줄링
+### 14.1 systemd (User) 스케줄링 (권장)
 
-> **참조**: `cron_schedules.txt`
+> **참조**: `deploy/systemd/README.md`, `deploy/systemd/*.service|*.timer`
 
-| 스케줄 | 모드 | 로그 |
+| 스케줄 | 유닛 | 역할 |
 |--------|------|------|
-| 매일 08:00 | `daily` | `cron_daily.log` |
-| 30분마다 | `continuous` | `cron_continuous.log` |
+| 4시간마다 | `aether-intraday.timer` | `refresh-db` → `intraday` |
+| 매일 08:00 (KST) | `aether-morning.timer` | `refresh-db` → `morning-report` |
+| 매일 08:15 (KST) | `aether-autotune.timer` | ops 튜닝 JSON 갱신(선택) |
+| 15분마다 | `aether-healthcheck.timer` | 결과/신선도/MinRec 체크(경보) |
 
 #### 14.1.1 Scheduled Ops Contract
 
@@ -610,6 +612,15 @@ while True (30분 주기):
 
 - 권장 엔트리포인트: `scripts/run_scheduled.py`
 - 계약(완료 기준/exit code/세이프 모드): `OPS_ACCEPTANCE.md`
+
+#### 14.1.2 운영 점검/리포트 스크립트
+
+| 파일 | 역할 |
+|------|------|
+| `scripts/ops_validate.py` | 오프라인/스테일 상황에서도 최소 1개 output 보장되는지 검증 |
+| `scripts/ops_healthcheck.py` | 최신 아티팩트 존재/나이/추천 수를 점검하고 텔레그램 경보 |
+| `scripts/ops_soak_report.py` | 최근 N시간 동안 스케줄 상태 요약(JSON) |
+| `utils/run_markets_metrics.py` | 스케줄 실행에서 사용한 마켓/신선도/추천 수 메트릭 기록 |
 
 ### 14.2 서버 관리
 
@@ -627,7 +638,7 @@ while True (30분 주기):
 
 - 정확도 ≤ 25% 시 재학습 트리거
 - 최소 48시간 간격 제한
-- `subprocess.Popen("python main.py --mode train --epochs 50")`
+- 백그라운드 재학습 실행 (예: `python main.py --mode train --epochs 50`)
 
 ### 14.4 Logrotate
 
@@ -664,6 +675,13 @@ while True (30분 주기):
 - Walk-forward 백테스트 엔진
 - screener → predictor → recommender 실제 파이프라인 재현
 - ECE + Spearman ρ 검증
+- 환경변수:
+  - `AETHER_BACKTEST_STRIDE_HOURS`: stride(시간)로 빠른/정밀 백테스트 전환
+  - `AETHER_BACKTEST_END_TIME_ISO`: 케이스 간 동일 end_time 고정(비교용)
+- 아티팩트:
+  - `analysis/backtest_summary_latest.json`
+  - `analysis/backtest_summary_{tag}_{ts}.json`
+  - `analysis/backtest_gate_values_{tag}_{ts}.csv`
 
 ### 15.3 분석 스크립트 (`analysis/`)
 
@@ -686,6 +704,14 @@ while True (30분 주기):
 | `generate_deep_analysis_report.py` | 심층 분석 리포트 생성 |
 | `sync_tasks_to_db.py` | 작업 동기화 |
 | `verify_transformer_mask.py` | Transformer 마스크 검증 |
+| `run_scheduled.py` | 스케줄 엔트리포인트(수집→추론, 워치독/신선도/워치온리 폴백) |
+| `eval_suite.py` | 백테스트 실행 + JSON 요약 저장(자동화용) |
+| `ablation_suite.py` | factors/context ablation 백테스트 비교(자동화용) |
+| `auto_tune_ops.py` | 스케줄 실행 메트릭 기반 ops 파라미터 추천 JSON 생성 |
+| `ops_validate.py` | 운영 계약(Exit code/MinRec/오프라인) 검증 |
+| `ops_healthcheck.py` | 운영 헬스체크 + 텔레그램 경보 |
+| `ops_soak_report.py` | 최근 운영 상태 요약 리포트 |
+| `optuna_full_run.py` | 긴 Optuna + eval/ablation 파이프라인(백그라운드/재개 가능) |
 
 ---
 

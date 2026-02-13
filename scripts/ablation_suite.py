@@ -32,6 +32,10 @@ def main():
     if args.no_telegram:
         base_cmd.append("--no_telegram")
 
+    # Pin a single end_time across all cases so ablation comparisons are apples-to-apples.
+    # (Also helps when DB is stale/offline: evaluator will clamp to DB latest if needed.)
+    pinned_end_time = datetime.now(timezone.utc).isoformat()
+
     runs = []
     cases = [
         ("baseline", {}),
@@ -45,6 +49,7 @@ def main():
         env = dict(os.environ)
         env["AETHER_BACKTEST_STRIDE_HOURS"] = str(int(args.stride_hours))
         env["AETHER_BACKTEST_SUMMARY_TAG"] = f"{args.tag}_{name}"
+        env["AETHER_BACKTEST_END_TIME_ISO"] = pinned_end_time
         for k, v in overrides.items():
             env[k] = str(v)
 
@@ -73,4 +78,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

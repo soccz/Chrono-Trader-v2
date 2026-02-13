@@ -21,6 +21,36 @@ from data.preprocessor import get_processed_data_for_training, get_market_index
 from models.hybrid_model import build_model
 from models.critic import build_critic
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(str(os.getenv(name, str(default)) or str(default)).strip())
+    except Exception:
+        return int(default)
+
+def _env_str(name: str, default: str = "") -> str:
+    return str(os.getenv(name, default) or default).strip()
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    v = str(os.getenv(name, "1" if default else "0") or ("1" if default else "0")).strip().lower()
+    return v in ("1", "true", "yes", "y", "on")
+
+def _write_optuna_checkpoint(study: optuna.Study, config_path: str) -> None:
+    """Best-effort checkpoint so long Optuna runs survive interruptions."""
+    try:
+        best = getattr(study, "best_params", None)
+        if not best:
+            return
+        ckpt = {
+            "best_value": float(getattr(study, "best_value", float("nan"))),
+            "best_params": dict(best),
+            "n_trials": int(len(getattr(study, "trials", []) or [])),
+        }
+        os.makedirs(os.path.dirname(config_path) or ".", exist_ok=True)
+        with open(config_path.replace(".json", "_checkpoint.json"), "w") as f:
+            json.dump(ckpt, f, indent=2)
+    except Exception as e:
+        logger.debug(f"[Optuna] Failed to write checkpoint: {e}")
+
 def _is_cuda() -> bool:
     return str(config.Device.DEVICE).startswith("cuda")
 
@@ -286,9 +316,41 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
         if X is None: return
 
         # IMPORTANT: We are now MAXIMIZING the correlation
-        study = optuna.create_study(direction='maximize') 
+        opt_trials = _env_int("AETHER_OPTUNA_TRIALS", 50)
+        opt_timeout = _env_int("AETHER_OPTUNA_TIMEOUT_SEC", 0)
+        opt_n_jobs = max(1, _env_int("AETHER_OPTUNA_N_JOBS", 1))
+        opt_storage = _env_str("AETHER_OPTUNA_STORAGE", "")
+        opt_study_name = _env_str("AETHER_OPTUNA_STUDY_NAME", "aether_gan_tune")
+        opt_load_if_exists = _env_bool("AETHER_OPTUNA_LOAD_IF_EXISTS", True)
+
+        create_kwargs = {"direction": "maximize"}
+        if opt_storage:
+            # Make sure target folder exists for sqlite:///analysis/....
+            if opt_storage.startswith("sqlite:///"):
+                try:
+                    sqlite_path = opt_storage[len("sqlite:///") :]
+                    os.makedirs(os.path.dirname(sqlite_path) or ".", exist_ok=True)
+                except Exception:
+                    pass
+            create_kwargs.update(
+                {
+                    "storage": opt_storage,
+                    "study_name": opt_study_name,
+                    "load_if_exists": bool(opt_load_if_exists),
+                }
+            )
+
+        study = optuna.create_study(**create_kwargs)
         objective_with_data = functools.partial(objective, X=X, y=y)
-        study.optimize(objective_with_data, n_trials=50)
+        study.optimize(
+            objective_with_data,
+            n_trials=int(opt_trials),
+            timeout=(None if opt_timeout <= 0 else int(opt_timeout)),
+            n_jobs=int(opt_n_jobs),
+            gc_after_trial=True,
+            catch=(Exception,),
+            callbacks=[lambda s, t: _write_optuna_checkpoint(s, config_path)],
+        )
 
         best_params = study.best_params
         logger.info(f"Tuning finished. Best parameters found: {best_params}")

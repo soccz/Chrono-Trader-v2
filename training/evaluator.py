@@ -2,19 +2,32 @@ import pandas as pd
 import numpy as np
 import os
 import json
+from typing import Optional
 from datetime import datetime, timedelta, timezone
 from tqdm import tqdm
 from scipy.stats import spearmanr
 
 from utils.config import config
 from utils.logger import logger
-from data.database import load_data
+from data.database import load_data, get_latest_db_timestamp
 from data.preprocessor import get_market_index
 from inference import predictor, recommender
 from utils import screener
 from analysis.validate_uncertainty import calculate_ece
 
 INITIAL_BALANCE = 10_000_000  # 1,000만원
+
+def _parse_end_time_env() -> Optional[datetime]:
+    v = str(os.getenv("AETHER_BACKTEST_END_TIME_ISO", "") or "").strip()
+    if not v:
+        return None
+    try:
+        ts = pd.to_datetime(v, utc=True, errors="raise")
+        if isinstance(ts, pd.Timestamp):
+            return ts.to_pydatetime()
+    except Exception as e:
+        logger.warning(f"Invalid AETHER_BACKTEST_END_TIME_ISO={v!r}: {e}")
+    return None
 
 def run(days_to_backtest: int = 10, stride_hours: int = 1, summary_tag: str = "") -> bool:
     """Runs a realistic, efficient backtest for the given number of days.
@@ -41,7 +54,13 @@ def run(days_to_backtest: int = 10, stride_hours: int = 1, summary_tag: str = ""
         logger.warning("model_config.json not found. Backtest will use default model parameters.")
 
     # 1. Pre-load all data for the entire backtest period + buffer
-    end_time = datetime.now(timezone.utc)
+    requested_end_time = _parse_end_time_env() or datetime.now(timezone.utc)
+    db_latest = get_latest_db_timestamp()
+    # Clamp end_time to DB latest to avoid simulating into the future.
+    if db_latest is not None and requested_end_time > db_latest:
+        end_time = db_latest
+    else:
+        end_time = requested_end_time
     start_time = end_time - timedelta(days=days_to_backtest)
     data_load_start_time = start_time - timedelta(hours=config.Data.SEQUENCE_LENGTH + 100) # Buffer for initial sequences
 
@@ -219,6 +238,9 @@ def run(days_to_backtest: int = 10, stride_hours: int = 1, summary_tag: str = ""
         "ts": datetime.now(timezone.utc).isoformat(),
         "days": int(days_to_backtest),
         "stride_hours": int(stride_hours),
+        "end_time": end_time.isoformat(),
+        "requested_end_time": requested_end_time.isoformat(),
+        "db_latest": db_latest.isoformat() if db_latest is not None else None,
         "n_trades": int(len(results_df)),
         "win_rate_pct": float(win_rate),
         "avg_return_per_trade": float(pnl.mean()),
