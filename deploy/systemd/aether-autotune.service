@@ -5,6 +5,6 @@ Description=AETHER ops auto-tune (writes analysis/ops_tuning.json)
 Type=oneshot
 WorkingDirectory=/mnt/20t/main/gan_t
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/mnt/20t/main/gan_t/.venv/bin/python /mnt/20t/main/gan_t/scripts/auto_tune_ops.py --window_runs 42 --write
+Environment=PYTHONPATH=/mnt/20t/main/gan_t
+ExecStart=/usr/bin/python3 /mnt/20t/main/gan_t/scripts/auto_tune_ops.py --window_runs 42 --write
 TimeoutStartSec=900
-
