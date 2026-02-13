@@ -503,6 +503,15 @@ def get_intermediate_data(market: str, market_index_df: pd.DataFrame, historical
         df['factor_vol'] = 0.0
         df['factor_liq'] = 0.0
 
+    # Ablation: keep model input dims fixed, but zero-out selected feature groups.
+    if str(os.getenv("AETHER_ABLATE_FACTORS", "0")).strip().lower() in ("1", "true", "yes", "y"):
+        for col in ["factor_size", "factor_mom", "factor_vol", "factor_liq"]:
+            df[col] = 0.0
+    if str(os.getenv("AETHER_ABLATE_CONTEXT", "0")).strip().lower() in ("1", "true", "yes", "y"):
+        # Macro/context features
+        df["market_index_return"] = 0.0
+        df["historical_similarity"] = 0.0
+
     df['future_pct_change'] = (df['close'].shift(-1) - df['close']) / df['close']
     df.fillna(0, inplace=True)
     

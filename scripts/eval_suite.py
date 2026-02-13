@@ -30,6 +30,7 @@ def main():
     os.makedirs("analysis", exist_ok=True)
     env = dict(os.environ)
     env["AETHER_BACKTEST_STRIDE_HOURS"] = str(int(args.stride_hours))
+    env["AETHER_BACKTEST_SUMMARY_TAG"] = str(args.tag)
 
     cmd = [args.python, "main.py", "--mode", "backtest", "--days", str(int(args.days))]
     if args.no_telegram:
@@ -43,6 +44,7 @@ def main():
     out = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "rc": int(rc),
+        "git_head": (subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout or "").strip() or None,
         "args": {
             "days": int(args.days),
             "stride_hours": int(args.stride_hours),
@@ -61,4 +63,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

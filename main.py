@@ -371,7 +371,8 @@ def main():
     elif args.mode == 'backtest':
         from training import evaluator
         stride = int(os.getenv("AETHER_BACKTEST_STRIDE_HOURS", "1") or 1)
-        success = evaluator.run(days_to_backtest=args.days, stride_hours=stride, summary_tag="main")
+        summary_tag = str(os.getenv("AETHER_BACKTEST_SUMMARY_TAG", "main") or "main").strip() or "main"
+        success = evaluator.run(days_to_backtest=args.days, stride_hours=stride, summary_tag=summary_tag)
         if not success:
             raise SystemExit(1)
 
