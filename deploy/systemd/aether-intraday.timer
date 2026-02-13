@@ -1,0 +1,12 @@
+[Unit]
+Description=Run AETHER intraday every 4 hours
+
+[Timer]
+OnCalendar=*-*-* 00,04,08,12,16,20:00:00
+Persistent=true
+RandomizedDelaySec=60
+Unit=aether-intraday.service
+
+[Install]
+WantedBy=timers.target
+

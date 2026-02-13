@@ -97,6 +97,9 @@ class PortfolioManager:
             invested_sum = 0
             for market, val in rows:
                 val = val or 0 # Handle None
+                # Fallback: If position_value is 0 (migrated data), estimate using default size
+                if val == 0:
+                    val = 10000000 * 0.1 # 10M * 10% assumption
                 invested_sum += val
                 positions.append({'market': market, 'value': val})
             
@@ -244,6 +247,26 @@ class PortfolioManager:
         except Exception as e:
             logger.error(f"Failed to get trade history: {e}")
             return []
+
+    def reset_portfolio(self):
+        """
+        Deletes ALL trades from the database. 
+        Used for resetting the simulation/paper trading environment.
+        """
+        try:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM trades") # No WHERE clause = Delete All
+            # Reset AutoIncrement?
+            cursor.execute("DELETE FROM sqlite_sequence WHERE name='trades'")
+            
+            conn.commit()
+            conn.close()
+            logger.info("Portfolio successfully reset. All trade history deleted.")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to reset portfolio: {e}")
+            return False
 
 # Global instance
 portfolio_manager = PortfolioManager()

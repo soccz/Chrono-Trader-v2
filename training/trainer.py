@@ -21,6 +21,18 @@ from data.preprocessor import get_processed_data_for_training, get_market_index
 from models.hybrid_model import build_model
 from models.critic import build_critic
 
+def _is_cuda() -> bool:
+    return str(config.Device.DEVICE).startswith("cuda")
+
+def _effective_batch_size(requested_batch_size: int) -> int:
+    """
+    Keep training stable on CPU-only environments by capping overly large batches.
+    """
+    if _is_cuda():
+        return requested_batch_size
+    cpu_cap = getattr(config.Gan, "MAX_BATCH_SIZE_CPU", 32)
+    return max(8, min(requested_batch_size, cpu_cap))
+
 def compute_gradient_penalty(critic, real_samples, fake_samples):
     """Calculates the gradient penalty loss for WGAN-GP and returns the gradient norm."""
     alpha = torch.rand(real_samples.size(0), 1).to(config.Device.DEVICE)
@@ -50,11 +62,13 @@ def objective(trial, X, y):
     n_layers = trial.suggest_int("n_layers", 2, 4)
     n_heads = trial.suggest_categorical("n_heads", [4, 8])
     batch_size = trial.suggest_categorical("batch_size", [32, 64])
+    batch_size = _effective_batch_size(batch_size)
     lambda_recon_initial = trial.suggest_float("lambda_recon_initial", config.Gan.Dynamics.LAMBDA_RECON_MIN, config.Gan.Dynamics.LAMBDA_RECON_MAX, log=True)
     lambda_gp_initial = trial.suggest_float("lambda_gp_initial", config.Gan.Dynamics.LAMBDA_GP_MIN, config.Gan.Dynamics.LAMBDA_GP_MAX, log=True)
     lambda_ece = trial.suggest_float("lambda_ece", 0.05, 0.5) # Narrowed range based on feedback
     critic_base_iters = trial.suggest_int("critic_base_iters", 3, 10) # Widened range based on feedback
     dropout_p = trial.suggest_float("dropout_p", 0.05, 0.35)
+    lambda_direction = trial.suggest_float("lambda_direction", 0.1, 1.0)
 
     # --- K-Fold Cross-Validation Setup ---
     n_splits = 5
@@ -72,8 +86,19 @@ def objective(trial, X, y):
 
             train_dataset = TensorDataset(torch.FloatTensor(X_train_fold), torch.FloatTensor(y_train_fold))
             val_dataset = TensorDataset(torch.FloatTensor(X_val_fold), torch.FloatTensor(y_val_fold))
-            train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
-            val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+            train_loader = DataLoader(
+                train_dataset,
+                batch_size=batch_size,
+                shuffle=True,
+                drop_last=True,
+                pin_memory=_is_cuda(),
+            )
+            val_loader = DataLoader(
+                val_dataset,
+                batch_size=batch_size,
+                shuffle=False,
+                pin_memory=_is_cuda(),
+            )
 
             # --- Model & Optimizer Setup ---
             generator = build_model(d_model=d_model, n_heads=n_heads, n_layers=n_layers, input_dim=X.shape[-1], noise_dim=config.Gan.NOISE_DIM, output_dim=y.shape[-1], dropout_p=dropout_p)
@@ -106,6 +131,7 @@ def objective(trial, X, y):
                         gradient_penalty, grad_norm = compute_gradient_penalty(critic, real_paths.data, fake_paths.data)
                         loss_C = fake_validity_critic.mean() - real_validity.mean() + lambda_gp_run * gradient_penalty
                         loss_C.backward()
+                        torch.nn.utils.clip_grad_norm_(critic.parameters(), max_norm=1.0)
                         optimizer_C.step()
 
                     optimizer_G.zero_grad()
@@ -117,8 +143,22 @@ def objective(trial, X, y):
                     pred_prob = torch.sigmoid(pred_return)
                     target_prob = (real_return > 0).float()
                     loss_G_ece = ((pred_prob - target_prob) ** 2).mean()
-                    loss_G = loss_G_adv + lambda_recon_run * loss_G_recon + lambda_ece * loss_G_ece
+
+                    # --- Directional Loss (penalizes wrong direction predictions) ---
+                    pred_dir_logit = gen_paths[:, -1] - gen_paths[:, 0]
+                    real_dir = (real_paths[:, -1] > real_paths[:, 0]).float()
+                    loss_G_direction = torch.nn.functional.binary_cross_entropy_with_logits(
+                        pred_dir_logit, real_dir
+                    )
+
+                    # --- Weighted MSE (larger movements get higher weight) ---
+                    movement_magnitude = real_paths.abs().sum(dim=1)
+                    weights = 1.0 + movement_magnitude / (movement_magnitude.mean() + 1e-8)
+                    loss_G_recon_weighted = (weights * (gen_paths - real_paths).pow(2).mean(dim=1)).mean()
+
+                    loss_G = loss_G_adv + lambda_recon_run * loss_G_recon_weighted + lambda_ece * loss_G_ece + lambda_direction * loss_G_direction
                     loss_G.backward()
+                    torch.nn.utils.clip_grad_norm_(generator.parameters(), max_norm=1.0)
                     optimizer_G.step()
 
                     # Track adversarial loss for stability penalty
@@ -211,6 +251,13 @@ def objective(trial, X, y):
     return average_correlation
 
 def run(markets: list = None, tune: bool = False, epochs: int = None):
+    # Reproducibility baseline for more stable comparisons across runs
+    seed = 42
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
     config_path = os.path.join("models", "model_config.json")
     if os.path.exists(config_path) and not tune:
         logger.info(f"Loading model configuration from {config_path}")
@@ -277,9 +324,10 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
         X, y = np.concatenate(X_list, axis=0), np.concatenate(y_list, axis=0)
         lr = config.Gan.LEARNING_RATE_G / 10
     else: # Full Training on all target markets
-        logger.info(f"Starting full training data assembly for markets: {config.Data.MARKET_INDEX_COINS}")
+        full_train_markets = getattr(config.Data, "TRAIN_COINS", config.Data.MARKET_INDEX_COINS)
+        logger.info(f"Starting full training data assembly for markets: {full_train_markets}")
         X_list, y_list = [], []
-        for market in config.Data.MARKET_INDEX_COINS:
+        for market in full_train_markets:
             X_market, y_market, _ = get_processed_data_for_training(market, market_index_df)
             if X_market is not None:
                 X_list.append(X_market)
@@ -297,6 +345,13 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
     if epochs is None:
         epochs = config.Gan.EPOCHS
 
+    effective_batch_size = _effective_batch_size(config.Gan.BATCH_SIZE)
+    if effective_batch_size != config.Gan.BATCH_SIZE:
+        logger.info(
+            f"CPU environment detected: reducing batch size from "
+            f"{config.Gan.BATCH_SIZE} to {effective_batch_size} for stability."
+        )
+
     # --- Load Diverse Ensemble Configurations ---
     ensemble_config_path = os.path.join("models", "ensemble_configs.json")
     if os.path.exists(ensemble_config_path):
@@ -313,6 +368,20 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
              "cnn_mode": config.Gan.CNN_MODE, "bagging_ratio": 0.9, "name": f"Default Model {i+1}"}
             for i in range(config.Gan.N_ENSEMBLE_MODELS)
         ]
+
+    # Respect configured ensemble size for compute-aware training.
+    # If ensemble_configs.json contains more configs than we want to train, truncate deterministically.
+    ensemble_limit = getattr(config.Gan, "N_ENSEMBLE_MODELS", None)
+    try:
+        ensemble_limit = int(ensemble_limit) if ensemble_limit is not None else None
+    except Exception:
+        ensemble_limit = None
+    if ensemble_limit is not None and ensemble_limit > 0 and len(model_configs) > ensemble_limit:
+        logger.info(
+            f"Limiting ensemble training configs from {len(model_configs)} to {ensemble_limit} "
+            f"based on config.Gan.N_ENSEMBLE_MODELS."
+        )
+        model_configs = model_configs[:ensemble_limit]
 
     for model_cfg in model_configs:
         model_id = model_cfg["id"]
@@ -342,13 +411,30 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
         logger.info(f"Model {model_id} will be trained on a random subset of {len(train_subset)} samples (Bagging with ratio {bagging_ratio}).")
 
         val_dataset = TensorDataset(torch.FloatTensor(X_val), torch.FloatTensor(y_val))
-        train_loader = DataLoader(train_subset, batch_size=config.Gan.BATCH_SIZE, shuffle=True, drop_last=True)
-        val_loader = DataLoader(val_dataset, batch_size=config.Gan.BATCH_SIZE, shuffle=False)
+        train_loader = DataLoader(
+            train_subset,
+            batch_size=effective_batch_size,
+            shuffle=True,
+            drop_last=True,
+            pin_memory=_is_cuda(),
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=effective_batch_size,
+            shuffle=False,
+            pin_memory=_is_cuda(),
+        )
 
         model_save_path = os.path.join("models", f"model_{model_id}.pth")
         if is_finetuning and os.path.exists(model_save_path):
             try:
                 generator = torch.load(model_save_path, map_location=config.Device.DEVICE, weights_only=False)
+                loaded_input_dim = getattr(generator, "input_dim", None)
+                expected_input_dim = X.shape[-1]
+                if loaded_input_dim is not None and loaded_input_dim != expected_input_dim:
+                    raise ValueError(
+                        f"Checkpoint input_dim mismatch (loaded={loaded_input_dim}, expected={expected_input_dim})"
+                    )
                 logger.info(f"Loaded model {model_id} for fine-tuning.")
             except Exception as e:
                 logger.error(f"Could not load model {model_id}: {e}. Rebuilding.")
@@ -374,6 +460,7 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
         lambda_recon_run = config.Gan.LAMBDA_RECON
         lambda_gp_run = config.Gan.LAMBDA_GP
         lambda_ece = config.Gan.LAMBDA_ECE
+        lambda_direction = config.Gan.LAMBDA_DIRECTION
         target_adv_ratio = config.Gan.Dynamics.TARGET_ADV_RATIO
         lambda_recon_min = config.Gan.Dynamics.LAMBDA_RECON_MIN
         lambda_recon_max = config.Gan.Dynamics.LAMBDA_RECON_MAX
@@ -404,75 +491,113 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
                     else:
                         c_iters = max(critic_min_iters, c_iters - 1)
 
+                # Critic updates (WGAN-GP)
                 for _ in range(c_iters):
                     optimizer_C.zero_grad()
                     fake_paths = generator(real_sequences).detach()
                     real_validity = critic(real_paths)
                     fake_validity_critic = critic(fake_paths)
-                    gradient_penalty, grad_norm = compute_gradient_penalty(critic, real_paths.data, fake_paths.data)
+                    gradient_penalty, grad_norm = compute_gradient_penalty(
+                        critic, real_paths.data, fake_paths.data
+                    )
                     loss_C = fake_validity_critic.mean() - real_validity.mean() + lambda_gp_run * gradient_penalty
                     loss_C.backward()
+                    torch.nn.utils.clip_grad_norm_(critic.parameters(), max_norm=1.0)
                     optimizer_C.step()
 
-                    optimizer_G.zero_grad()
-                    gen_paths = generator(real_sequences)
-                    loss_G_adv = -critic(gen_paths).mean()
-                    loss_G_recon = recon_criterion(gen_paths, real_paths)
+                # Generator update (exactly once per batch for stability)
+                optimizer_G.zero_grad()
+                gen_paths = generator(real_sequences)
+                loss_G_adv = -critic(gen_paths).mean()
+                loss_G_recon = recon_criterion(gen_paths, real_paths)
 
-                    pred_return = gen_paths.sum(dim=1)
-                    real_return = real_paths.sum(dim=1)
-                    pred_prob = torch.sigmoid(pred_return)
-                    target_prob = (real_return > 0).float()
-                    loss_G_ece = ((pred_prob - target_prob) ** 2).mean()
+                pred_return = gen_paths.sum(dim=1)
+                real_return = real_paths.sum(dim=1)
+                pred_prob = torch.sigmoid(pred_return)
+                target_prob = (real_return > 0).float()
+                loss_G_ece = ((pred_prob - target_prob) ** 2).mean()
 
-                    loss_G = loss_G_adv + lambda_recon_run * loss_G_recon + lambda_ece * loss_G_ece
-                    loss_G.backward()
-                    optimizer_G.step()
+                # --- Direction Balance Loss ---
+                pred_direction_prob = torch.sigmoid(gen_paths[:, -1] - gen_paths[:, 0])
+                direction_balance = torch.abs(pred_direction_prob.mean() - 0.5)
+                loss_G_balance = direction_balance * 0.1
 
-                    total_steps += 1
+                # --- Directional Loss (differentiable) ---
+                real_direction = (real_paths[:, -1] > real_paths[:, 0]).float()
+                direction_logits = gen_paths[:, -1] - gen_paths[:, 0]
+                loss_G_direction = torch.nn.functional.binary_cross_entropy_with_logits(
+                    direction_logits, real_direction
+                )
 
-                    if batch_idx % 20 == 0:
-                        w_est = real_validity.mean() - fake_validity_critic.mean()
-                        ratio = loss_G_adv / (loss_G_recon + 1e-9)
-                        logger.info(
-                            f"Epoch [{epoch+1}/{epochs}] | Batch [{batch_idx}/{len(train_loader)}] | "
-                            f"C_iters: {c_iters} | W_est:{w_est:.4f} | ||∇D||:{grad_norm:.3f} | GP:{gradient_penalty:.3f} | "
-                            f"lossC:{loss_C:.3f} | lossG_adv:{loss_G_adv:.3f} | lossG_recon:{loss_G_recon:.3f} | "
-                            f"lossG_ece:{loss_G_ece:.4f} | ratio:{ratio:.3f}"
-                        )
+                # --- Weighted MSE (larger movements get higher weight) ---
+                movement_magnitude = real_paths.abs().sum(dim=1)
+                weights = 1.0 + movement_magnitude / (movement_magnitude.mean() + 1e-8)
+                loss_G_recon_weighted = (weights * (gen_paths - real_paths).pow(2).mean(dim=1)).mean()
 
-                        # --- GAN Stability Check (Auto-stopping) ---
-                        if total_steps > rules['warmup_steps'] and total_steps % rules['check_interval'] == 0:
-                            window = rules['moving_avg_window']
-                            if len(metric_history['ratio']) >= window:
-                                avg_ratio = np.mean(metric_history['ratio'][-window:])
-                                avg_grad_norm = np.mean(metric_history['grad_norm'][-window:])
+                # --- Gate Regularization Loss ---
+                loss_G_gate_reg = getattr(generator, '_gate_reg_loss', torch.tensor(0.0).to(config.Device.DEVICE))
+                
+                loss_G = (
+                    loss_G_adv
+                    + lambda_recon_run * loss_G_recon_weighted
+                    + lambda_ece * loss_G_ece
+                    + loss_G_balance
+                    + loss_G_gate_reg * 0.5
+                    + lambda_direction * loss_G_direction
+                )
+                loss_G.backward()
+                torch.nn.utils.clip_grad_norm_(generator.parameters(), max_norm=1.0)
+                optimizer_G.step()
 
-                                # Check Warning Conditions
-                                if not (rules['warnings']['ratio_range'][0] <= avg_ratio <= rules['warnings']['ratio_range'][1]):
-                                    logger.warning(f"[Auto-stop] Warning: Moving avg of ratio ({avg_ratio:.3f}) is outside the warning range {rules['warnings']['ratio_range']}.")
-                                if not (rules['warnings']['grad_norm_range'][0] <= avg_grad_norm <= rules['warnings']['grad_norm_range'][1]):
-                                    logger.warning(f"[Auto-stop] Warning: Moving avg of grad_norm ({avg_grad_norm:.3f}) is outside the warning range {rules['warnings']['grad_norm_range']}.")
+                total_steps += 1
 
-                                # Check Strong Stop Conditions
-                                if avg_ratio < rules['strong_stop']['ratio_lower_bound']:
-                                    strong_stop_counters['ratio_sustained'] += rules['check_interval']
-                                else:
-                                    strong_stop_counters['ratio_sustained'] = 0
-                                
-                                if not (rules['strong_stop']['grad_norm_range'][0] <= avg_grad_norm <= rules['strong_stop']['grad_norm_range'][1]):
-                                    strong_stop_counters['grad_norm_sustained'] += rules['check_interval']
-                                else:
-                                    strong_stop_counters['grad_norm_sustained'] = 0
+                # Keep metrics updated for auto-stop checks
+                monitor_recon_floor = max(abs(loss_G_recon.item()), 1e-2)
+                ratio_value = float(loss_G_adv.item() / monitor_recon_floor)
+                metric_history['ratio'].append(ratio_value)
+                metric_history['grad_norm'].append(grad_norm.item())
 
-                                # Trigger Stop if Necessary
-                                if strong_stop_counters['ratio_sustained'] >= rules['strong_stop']['sustained_steps']:
-                                    logger.error(f"[Auto-stop] STOP: GAN ratio has been below {rules['strong_stop']['ratio_lower_bound']} for {strong_stop_counters['ratio_sustained']} steps. Stopping training.")
-                                    stop_training_flag = True
-                                
-                                if strong_stop_counters['grad_norm_sustained'] >= rules['strong_stop']['sustained_steps']:
-                                    logger.error(f"[Auto-stop] STOP: Grad norm has been outside {rules['strong_stop']['grad_norm_range']} for {strong_stop_counters['grad_norm_sustained']} steps. Stopping training.")
-                                    stop_training_flag = True
+                if batch_idx % 20 == 0:
+                    w_est = real_validity.mean() - fake_validity_critic.mean()
+                    logger.info(
+                        f"Epoch [{epoch+1}/{epochs}] | Batch [{batch_idx}/{len(train_loader)}] | "
+                        f"C_iters: {c_iters} | W_est:{w_est:.4f} | ||∇D||:{grad_norm:.3f} | GP:{gradient_penalty:.3f} | "
+                        f"lossC:{loss_C:.3f} | lossG_adv:{loss_G_adv:.3f} | lossG_recon:{loss_G_recon:.3f} | "
+                        f"lossG_ece:{loss_G_ece:.4f} | ratio:{ratio_value:.3f}"
+                    )
+
+                # --- GAN Stability Check (Auto-stopping) ---
+                if total_steps > rules['warmup_steps'] and total_steps % rules['check_interval'] == 0:
+                    window = rules['moving_avg_window']
+                    if len(metric_history['ratio']) >= window:
+                        avg_ratio = np.mean(metric_history['ratio'][-window:])
+                        avg_grad_norm = np.mean(metric_history['grad_norm'][-window:])
+
+                        # Check Warning Conditions
+                        if not (rules['warnings']['ratio_range'][0] <= avg_ratio <= rules['warnings']['ratio_range'][1]):
+                            logger.warning(f"[Auto-stop] Warning: Moving avg of ratio ({avg_ratio:.3f}) is outside the warning range {rules['warnings']['ratio_range']}.")
+                        if not (rules['warnings']['grad_norm_range'][0] <= avg_grad_norm <= rules['warnings']['grad_norm_range'][1]):
+                            logger.warning(f"[Auto-stop] Warning: Moving avg of grad_norm ({avg_grad_norm:.3f}) is outside the warning range {rules['warnings']['grad_norm_range']}.")
+
+                        # Check Strong Stop Conditions
+                        if avg_ratio < rules['strong_stop']['ratio_lower_bound']:
+                            strong_stop_counters['ratio_sustained'] += rules['check_interval']
+                        else:
+                            strong_stop_counters['ratio_sustained'] = 0
+                        
+                        if not (rules['strong_stop']['grad_norm_range'][0] <= avg_grad_norm <= rules['strong_stop']['grad_norm_range'][1]):
+                            strong_stop_counters['grad_norm_sustained'] += rules['check_interval']
+                        else:
+                            strong_stop_counters['grad_norm_sustained'] = 0
+
+                        # Trigger Stop if Necessary
+                        if strong_stop_counters['ratio_sustained'] >= rules['strong_stop']['sustained_steps']:
+                            logger.error(f"[Auto-stop] STOP: GAN ratio has been below {rules['strong_stop']['ratio_lower_bound']} for {strong_stop_counters['ratio_sustained']} steps. Stopping training.")
+                            stop_training_flag = True
+                        
+                        if strong_stop_counters['grad_norm_sustained'] >= rules['strong_stop']['sustained_steps']:
+                            logger.error(f"[Auto-stop] STOP: Grad norm has been outside {rules['strong_stop']['grad_norm_range']} for {strong_stop_counters['grad_norm_sustained']} steps. Stopping training.")
+                            stop_training_flag = True
 
                 # Dynamic balancing for reconstruction weight
                 adv_abs = loss_G_adv.abs().item()

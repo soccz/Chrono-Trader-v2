@@ -6,6 +6,7 @@ __pycache__/
 
 # Virtual Environment
 venv/
+.venv/
 
 # Database
 *.db
@@ -18,6 +19,22 @@ venv/
 logs/
 predictions/
 recommendations/
+analysis/*.json
+analysis/*.jsonl
+analysis/*.csv
+analysis/*.png
+analysis/*.svg
+analysis/ops_tuning.json
+analysis/run_markets*.json*
+analysis/gate_values.csv
+
+# Local secrets / agent state
+.env
+.agent/
+.logrotate.state
+
+# Node / frontend
+node_modules/
 
 # IDEs
 .idea/
@@ -30,3 +47,12 @@ recommendations/
 all_predictions.csv
 all_prices.csv
 data/pump_dataset.csv
+
+# Runtime artifacts
+*.log
+*.log-*
+*.pid
+*.gz
+portfolio_state.json
+cloudflared*
+tunnel_url.txt

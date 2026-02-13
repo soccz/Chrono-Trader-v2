@@ -1,0 +1,12 @@
+[Unit]
+Description=AETHER morning report scheduled run (refresh-db + morning-report)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/mnt/20t/main/gan_t
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/mnt/20t/main/gan_t/.venv/bin/python /mnt/20t/main/gan_t/scripts/run_scheduled.py --job morning-report --python /mnt/20t/main/gan_t/.venv/bin/python --lock_timeout_sec 0 --limit 8 --lookback_days 1 --min_k 1 --market_budget 40 --refresh_top_n 24 --refresh_days 7 --timeout_sec_refresh 2400 --timeout_sec_infer 0 --skip_pattern_followers
+TimeoutStartSec=5400
+

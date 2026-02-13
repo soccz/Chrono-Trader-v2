@@ -1,0 +1,12 @@
+[Unit]
+Description=Run AETHER ops auto-tune daily (after morning)
+
+[Timer]
+OnCalendar=*-*-* 08:15:00
+Persistent=true
+RandomizedDelaySec=180
+Unit=aether-autotune.service
+
+[Install]
+WantedBy=timers.target
+

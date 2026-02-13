@@ -25,11 +25,13 @@ def main(args):
     analysis_start_time = analysis_end_time - timedelta(days=args.days)
 
     # We need historical data *before* the prediction time, and future data *after*
-    data_load_start_time = analysis_start_time - timedelta(hours=config.SEQUENCE_LENGTH + 24)
+    data_load_start_time = analysis_start_time - timedelta(hours=config.Data.SEQUENCE_LENGTH + 24)
     data_load_end_time = datetime.now(timezone.utc)
 
     logger.info(f"Loading market data from {data_load_start_time} to {data_load_end_time}...")
-    all_data_query = f"SELECT * FROM crypto_data WHERE timestamp >= '{data_load_start_time}' AND timestamp <= '{data_load_end_time}'"
+    start_s = data_load_start_time.strftime('%Y-%m-%dT%H:%M:%S')
+    end_s = data_load_end_time.strftime('%Y-%m-%dT%H:%M:%S')
+    all_data_query = f"SELECT * FROM crypto_data WHERE timestamp >= '{start_s}' AND timestamp <= '{end_s}'"
     all_df = load_data(all_data_query)
     if all_df.empty:
         logger.error("Not enough data to run analysis.")

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run AETHER morning report daily at 08:00 KST
+
+[Timer]
+OnCalendar=*-*-* 08:00:00
+Persistent=true
+RandomizedDelaySec=120
+Unit=aether-morning.service
+
+[Install]
+WantedBy=timers.target
+

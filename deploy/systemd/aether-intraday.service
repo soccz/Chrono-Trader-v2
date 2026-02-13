@@ -1,0 +1,12 @@
+[Unit]
+Description=AETHER intraday scheduled run (refresh-db + intraday)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/mnt/20t/main/gan_t
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/mnt/20t/main/gan_t/.venv/bin/python /mnt/20t/main/gan_t/scripts/run_scheduled.py --job intraday --python /mnt/20t/main/gan_t/.venv/bin/python --lock_timeout_sec 0 --limit 8 --lookback_days 1 --min_k 1 --market_budget 24 --refresh_top_n 16 --refresh_days 3 --timeout_sec_refresh 1200 --timeout_sec_infer 0
+TimeoutStartSec=3600
+

@@ -17,6 +17,8 @@ class Config:
         MODEL_PATH = "models/model_1.pth"
         MODEL_PATH_SHORT = "models/model_short.pth"
         REC_TAG = "standard"  # Tag for recommendation files (standard/short)
+        # Timezone used for human-facing reports (e.g., Telegram). Cron scheduling should still be set explicitly.
+        REPORT_TIMEZONE = os.getenv("AETHER_REPORT_TIMEZONE", "Asia/Seoul")
 
     # --- Device Configuration ---
     class Device:
@@ -27,6 +29,11 @@ class Config:
     class Data:
         # Markets to use for building the primary market index
         MARKET_INDEX_COINS = ["KRW-BTC", "KRW-ETH"]
+        # Markets to use for full model training (top liquidity KRW coins)
+        TRAIN_COINS = [
+            "KRW-BTC", "KRW-ETH", "KRW-XRP", "KRW-SOL", "KRW-DOGE",
+            "KRW-ADA", "KRW-AVAX", "KRW-DOT", "KRW-MATIC", "KRW-LINK"
+        ]
         # The sequence length (in hours) for the main GAN model's input
         SEQUENCE_LENGTH = 168
         # The future window size (in hours) to be predicted by the main model
@@ -40,7 +47,9 @@ class Config:
             'market_index_return', 'historical_similarity',  # Context features (indices 8, 9)
             'bb_upper', 'bb_middle', 'bb_lower', 'volume_ma',
             'volatility_24h', 'volatility_7d', 'volume_volatility',
-            'alpha', 'beta'
+            'alpha', 'beta',
+            'price_position', 'volume_ratio', 'return_skew_24h', 'cross_corr_btc',
+            'factor_size', 'factor_mom', 'factor_vol', 'factor_liq'
         ]
         # Index of market_index_return in FEATURE_COLUMNS (for contextual PE)
         # Context dimensions: market_index_return (idx 8) + historical_similarity (idx 9)
@@ -66,10 +75,57 @@ class Config:
         }
         # Minimum absolute expected return to consider a signal valid
         MIN_SIGNAL_RETURN = 0.001  # 0.1% - lowered to match model's conservative predictions
-        # Base uncertainty score threshold for accepting a trade
-        UNCERTAINTY_THRESHOLD = 7.5
+        # Base uncertainty score threshold for accepting a trade (matched to model output scale)
+        UNCERTAINTY_THRESHOLD = 500
+        # Use current-batch uncertainty distribution to adapt threshold robustly.
+        ENABLE_DYNAMIC_UNCERTAINTY_THRESHOLD = True
+        # Keep roughly this quantile of lower-uncertainty candidates before other filters.
+        DYNAMIC_UNCERTAINTY_QUANTILE = 0.65
+        # Clamp adaptive threshold to avoid overreaction to outliers.
+        DYNAMIC_UNCERTAINTY_MIN_MULTIPLIER = 0.8
+        DYNAMIC_UNCERTAINTY_MAX_MULTIPLIER = 4.0
         # Multiplier for the uncertainty threshold for counter-trend trades (e.g., 0.7 makes it 30% stricter)
         COUNTER_TREND_UNCERTAINTY_MULTIPLIER = 0.7
+        # Minimum ensemble agreement required to keep a candidate.
+        MIN_CONSENSUS_SCORE = 0.6
+        # Counter-trend trades require stronger model agreement.
+        COUNTER_TREND_MIN_CONSENSUS_SCORE = 0.8
+        # Prevent CV-based uncertainty blow-ups when mean predicted return is near-zero.
+        # (returns are per-step returns, e.g. 0.002 = 0.2%)
+        UNCERTAINTY_CV_DENOM_FLOOR = 0.002
+        # Live execution requirement: ensure at least N recommendations are produced each run.
+        MIN_RECOMMENDATIONS_LIVE = 1
+        # MinRec behavior:
+        # - "trade": force a minimal-risk trade candidate if possible (still can degrade to watch if impossible)
+        # - "watch": never force a trade; output a watch-only item when no recs survive
+        MIN_REC_MODE = os.getenv("AETHER_MIN_REC_MODE", "trade").strip().lower()
+        # Do not force neutral/no-signal items.
+        MIN_REC_DISALLOW_NEUTRAL = True
+        # Minimum absolute expected return for forced trade candidates.
+        MIN_REC_MIN_ABS_EXPECTED_RETURN = float(os.getenv("AETHER_MIN_REC_MIN_ABS_EXPECTED_RETURN", "0.002"))
+        # Minimum consensus for forced trade candidates (relaxes ensemble noise).
+        MIN_REC_MIN_CONSENSUS_SCORE = float(os.getenv("AETHER_MIN_REC_MIN_CONSENSUS_SCORE", "0.5"))
+        # Maximum uncertainty multiple for forced trade candidates. (relative to base UNCERTAINTY_THRESHOLD)
+        MIN_REC_MAX_UNCERTAINTY_MULTIPLIER = float(os.getenv("AETHER_MIN_REC_MAX_UNCERTAINTY_MULTIPLIER", "6.0"))
+        # If no forced trade candidate is safe enough, produce a watch-only item instead of nothing.
+        MIN_REC_ALLOW_WATCH_ONLY_FALLBACK = True
+        # Keep liquidity as a hard constraint even in min-rec fallback.
+        MIN_REC_FALLBACK_ALLOW_LOW_LIQUIDITY = False
+        # Consider data stale if last candle is older than this many hours (screener fallback).
+        SCREENER_MAX_STALENESS_HOURS_LIVE = 24
+        # Hard gate for scheduled inference runs (intraday/morning): if DB is too stale, abort and alert.
+        # These can be overridden via env vars to match your collection cadence.
+        DATA_FRESHNESS_MAX_LAG_HOURS_INTRADAY = float(os.getenv("AETHER_FRESHNESS_MAX_LAG_HOURS_INTRADAY", "6"))
+        DATA_FRESHNESS_MAX_LAG_HOURS_MORNING = float(os.getenv("AETHER_FRESHNESS_MAX_LAG_HOURS_MORNING", "12"))
+        FAIL_ON_STALE_DATA_LIVE = True
+        STALE_DATA_ALERT_SEND_TELEGRAM = True
+        # Ops safety: force all outputs to be "watch-only" regardless of signal quality.
+        # Intended for stale/offline override paths in scheduled automation.
+        RUNTIME_WATCH_ONLY = os.getenv("AETHER_RUNTIME_WATCH_ONLY", "0").strip() in ("1", "true", "yes", "y")
+
+        # If only a single candidate survives to uncertainty stage, allow it to pass even if above threshold.
+        # This reduces excessive MinRec forcing when the pipeline already narrowed to 1 liquid candidate.
+        ALLOW_SINGLE_CANDIDATE_UNCERTAINTY_BYPASS = True
         # Short and long window SMA periods for determining market regime
         REGIME_SMA_SHORT = 20
         REGIME_SMA_LONG = 60
@@ -87,6 +143,15 @@ class Config:
         KELLY_FRACTION = 0.2
         # Minimum probability for a pump signal to be considered significant
         PUMP_PROBABILITY_THRESHOLD = 0.2
+        # Safety switch: by default, do NOT force-fill recommendations that failed filters.
+        FORCED_TOPK_ENABLED = False
+        # Optional backtest override (kept False for strict realism).
+        FORCED_TOPK_BACKTEST_ENABLED = False
+        # Even when forced fallback is enabled, never revive these failed conditions.
+        FORCED_TOPK_EXCLUDE_FAILED_REASONS = (
+            "High Uncertainty",
+            "Low Liquidity",
+        )
 
     # --- GAN Model & Training Hyperparameters ---
     class Gan:
@@ -97,10 +162,12 @@ class Config:
         DROPOUT_P = 0.1
         NOISE_DIM = 32
         CNN_MODE = '1D'
+        USE_CAUSAL_MASK = True
 
         # General Training
         EPOCHS = 100
         BATCH_SIZE = 64 # Optimized for RTX 3070 (8GB VRAM)
+        MAX_BATCH_SIZE_CPU = 32  # CPU-only fallback cap for stability
         TRAIN_SPLIT = 0.9
         N_ENSEMBLE_MODELS = 3
 
@@ -109,6 +176,8 @@ class Config:
         LEARNING_RATE_C = 0.0002  # Critic (TTUR)
         # Weight for the Expected Calibration Error loss term
         LAMBDA_ECE = 0.1
+        # Weight for directional accuracy loss (penalizes wrong direction predictions)
+        LAMBDA_DIRECTION = 0.3
 
         # Loss Weights & Dynamics (for WGAN-GP)
         LAMBDA_GP = 10              # Gradient penalty lambda

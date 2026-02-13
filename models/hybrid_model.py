@@ -108,6 +108,29 @@ class ExplainableGatedFusion(nn.Module):
         
         gate = self.gate_net(combined)  # (batch, d_model)
         
+        # --- Gate Regularization (ENHANCED) ---
+        # 1. Keep mean in hybrid range (0.3 - 0.7)
+        gate_mean = gate.mean()
+        gate_range_reg = torch.relu(0.3 - gate_mean) + torch.relu(gate_mean - 0.7)
+        
+        # 2. NEW: Encourage diversity within batch (prevent collapse to single value)
+        gate_per_sample = gate.mean(dim=1)  # (batch,) - average gate per sample
+        gate_diversity = torch.std(gate_per_sample, unbiased=False)  # Stable for small batch sizes
+        gate_diversity_loss = -0.1 * gate_diversity  # Negative to encourage diversity
+        
+        # 3. NEW: Prototype diversity - encourage prototypes to be spread out
+        proto_norms = nn.functional.normalize(self.prototype_bank, p=2, dim=1)
+        proto_sim_matrix = torch.mm(proto_norms, proto_norms.t())  # (n_prototypes, n_prototypes)
+        # Exclude diagonal, penalize high similarity between prototypes
+        mask = ~torch.eye(proto_sim_matrix.size(0), dtype=torch.bool, device=proto_sim_matrix.device)
+        proto_diversity_loss = 0.01 * proto_sim_matrix[mask].mean()  # Lower sim = more diverse
+        
+        # Combined regularization loss
+        total_reg_loss = gate_range_reg + gate_diversity_loss + proto_diversity_loss
+        self._gate_reg_loss = total_reg_loss
+        self._gate_diversity = gate_diversity.item()
+        self._proto_diversity_loss = proto_diversity_loss.item()
+        
         # Weighted fusion
         fused = gate * global_features + (1 - gate) * local_proj
         
@@ -118,11 +141,15 @@ class ExplainableGatedFusion(nn.Module):
                 'transformer_proto_sims': transformer_proto_sims.detach().cpu().numpy(),
                 'cnn_proto_sims': cnn_proto_sims.detach().cpu().numpy(),
                 'gate_values': gate.mean(dim=1).detach().cpu().numpy(),  # Average gate for interpretability
-                'prototype_bank': self.prototype_bank.detach().cpu().numpy()
+                'gate_diversity': gate_diversity.item(),
+                'prototype_bank': self.prototype_bank.detach().cpu().numpy(),
+                'gate_reg_loss': total_reg_loss.item(),
+                'proto_diversity_loss': proto_diversity_loss.item()
             }
             return fused, gate_info
         
         return fused
+
 
 
 # Keep old class name as alias for backward compatibility
@@ -135,12 +162,14 @@ class HybridModel(nn.Module):
     1. Contextual PE: Injects Market Index Return (BTC/ETH) into the Transformer's time perception.
     2. Gated Fusion: Dynamically balances between Transformer (Global) and CNN (Local) features.
     """
-    def __init__(self, d_model, n_heads, n_layers, input_dim, noise_dim, output_dim, dropout_p, context_dim=1):
+    def __init__(self, d_model, n_heads, n_layers, input_dim, noise_dim, output_dim, dropout_p, context_dim=1, use_causal_mask=None):
         super(HybridModel, self).__init__()
         
         self.cnn_mode = config.Gan.CNN_MODE
         self.input_dim = input_dim
         self.context_dim = context_dim
+        if use_causal_mask is None:
+            use_causal_mask = getattr(config.Gan, "USE_CAUSAL_MASK", True)
 
         # --- Global Path (Transformer) ---
         self.transformer_encoder = build_transformer_encoder(
@@ -149,7 +178,8 @@ class HybridModel(nn.Module):
             n_heads=n_heads,
             n_layers=n_layers,
             dropout_p=dropout_p,
-            context_dim=context_dim
+            context_dim=context_dim,
+            use_causal_mask=use_causal_mask
         )
         
         # --- Local Path (Switchable CNN) ---
@@ -207,7 +237,8 @@ class HybridModel(nn.Module):
         self.decoder = build_gan_decoder(
             context_dim=d_model, # Output of fusion is d_model size
             noise_dim=noise_dim,
-            output_dim=output_dim
+            output_dim=output_dim,
+            dropout_p=dropout_p
         )
         self.noise_dim = noise_dim
 
@@ -244,9 +275,8 @@ class HybridModel(nn.Module):
             image_tensor = batch_to_gaf_tensor(src, image_size=config.Data.IMAGE_SIZE) # -> (B, C, S, S)
             cnn_features = self.cnn_encoder(image_tensor)
 
-        cnn_features = cnn_features.squeeze() # Remove pooled dimensions
-        if cnn_features.dim() == 1:
-             cnn_features = cnn_features.unsqueeze(0)
+        # Keep a stable shape for all batch sizes: (B, cnn_output_dim)
+        cnn_features = cnn_features.flatten(start_dim=1)
 
         # 3. Gated Fusion - with optional gate info
         if return_explainability:
@@ -254,6 +284,10 @@ class HybridModel(nn.Module):
         else:
             fused_context = self.fusion_module(last_step_transformer_context, cnn_features)
             gate_info = None
+        
+        # Propagate gate regularization loss to top-level model
+        # so trainer.py's getattr(generator, '_gate_reg_loss') can find it
+        self._gate_reg_loss = getattr(self.fusion_module, '_gate_reg_loss', torch.tensor(0.0).to(config.Device.DEVICE))
         
         # 4. Conditional Generation (GAN)
         noise = torch.randn(src.size(0), self.noise_dim).to(config.Device.DEVICE)
@@ -278,7 +312,8 @@ def build_model(d_model, n_heads, n_layers, input_dim, noise_dim, output_dim, dr
         noise_dim=noise_dim,
         output_dim=output_dim,
         dropout_p=dropout_p,
-        context_dim=config.Data.CONTEXT_DIM  # Use config: market_index + historical_similarity
+        context_dim=config.Data.CONTEXT_DIM,  # Use config: market_index + historical_similarity
+        use_causal_mask=getattr(config.Gan, "USE_CAUSAL_MASK", True)
     )
     model.to(config.Device.DEVICE)
     return model

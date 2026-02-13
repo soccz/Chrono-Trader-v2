@@ -1,0 +1,25 @@
+# Cron Examples
+#
+# Goal:
+# - Every 4 hours: intraday inference-only run
+# - Daily 08:00: morning report inference-only run
+#
+# Recommendation: run in KST explicitly.
+# If your cron supports it (most do), use CRON_TZ=Asia/Seoul so "08:00" means 08:00 KST.
+CRON_TZ=Asia/Seoul
+
+# Intraday (every 4 hours): refresh-db then intraday in one pipeline (offline-safe).
+0 */4 * * * cd /mnt/20t/main/gan_t && /mnt/20t/main/gan_t/.venv/bin/python scripts/run_scheduled.py --job intraday --python /mnt/20t/main/gan_t/.venv/bin/python --lock_timeout_sec 0 --limit 8 --lookback_days 1 --min_k 1 --market_budget 24 --refresh_top_n 16 --refresh_days 3 --timeout_sec_refresh 1200 --timeout_sec_infer 0 >> cron_intraday.log 2>&1
+
+# Morning report (08:00 KST): refresh-db then morning-report in one pipeline (offline-safe).
+0 8 * * * cd /mnt/20t/main/gan_t && /mnt/20t/main/gan_t/.venv/bin/python scripts/run_scheduled.py --job morning-report --python /mnt/20t/main/gan_t/.venv/bin/python --lock_timeout_sec 0 --limit 8 --lookback_days 1 --min_k 1 --market_budget 40 --refresh_top_n 24 --refresh_days 7 --timeout_sec_refresh 2400 --timeout_sec_infer 0 --skip_pattern_followers >> cron_morning.log 2>&1
+
+# Auto-tune (optional): update analysis/ops_tuning.json from recent runs.
+# Suggested: daily after morning report.
+15 8 * * * cd /mnt/20t/main/gan_t && /mnt/20t/main/gan_t/.venv/bin/python scripts/auto_tune_ops.py --window_runs 42 --write >> cron_tune.log 2>&1
+
+# Notes:
+# - Pipeline always runs refresh-db first, then runs inference with --no_auto_refresh for stability.
+# - Watch-only safe-mode is activated only when the freshness gate aborts (exit=2). Refresh-db failure alone does not force watch-only.
+# - If your cron runs in UTC and does NOT support CRON_TZ, schedule morning-report at 23:00 UTC (08:00 KST):
+#   0 23 * * * cd /mnt/20t/main/gan_t && /usr/bin/python3 main.py --mode morning-report ... >> cron_morning.log 2>&1

@@ -16,8 +16,12 @@ from analysis.validate_uncertainty import calculate_ece
 
 INITIAL_BALANCE = 10_000_000  # 1,000만원
 
-def run(days_to_backtest: int = 10):
-    """Runs a realistic, efficient backtest for the given number of days."""
+def run(days_to_backtest: int = 10) -> bool:
+    """Runs a realistic, efficient backtest for the given number of days.
+
+    Returns:
+        bool: True if backtest produced analyzable trades, otherwise False.
+    """
     logger.info(f"=== Starting Backtest for the last {days_to_backtest} days ===")
 
     # Load the model configuration to ensure consistent architecture
@@ -41,11 +45,13 @@ def run(days_to_backtest: int = 10):
     data_load_start_time = start_time - timedelta(hours=config.Data.SEQUENCE_LENGTH + 100) # Buffer for initial sequences
 
     logger.info(f"Loading all market data from {data_load_start_time} to {end_time}...")
-    all_data_query = f"SELECT * FROM crypto_data WHERE timestamp >= '{data_load_start_time}' AND timestamp <= '{end_time}'"
+    start_s = data_load_start_time.strftime('%Y-%m-%dT%H:%M:%S')
+    end_s = end_time.strftime('%Y-%m-%dT%H:%M:%S')
+    all_data_query = f"SELECT * FROM crypto_data WHERE timestamp >= '{start_s}' AND timestamp <= '{end_s}'"
     all_df = load_data(all_data_query)
     if all_df.empty:
         logger.error("Not enough data to run backtest.")
-        return
+        return False
     all_df['timestamp'] = pd.to_datetime(all_df['timestamp']).dt.tz_localize('UTC')
     all_df.set_index('timestamp', inplace=True)
     logger.info(f"Loaded {len(all_df)} total records for the backtesting period.")
@@ -94,18 +100,29 @@ def run(days_to_backtest: int = 10):
                 if not future_price_df.empty:
                     actual_future_price = future_price_df.iloc[0]['close']
                     actual_return = (actual_future_price / rec['current_price']) - 1
-                    predicted_return = np.sum(rec['predicted_pattern'])
+                    
+                    # Use 'pattern' (from recommender) or fallback to 'predicted_pattern' (from predictor)
+                    pattern = rec.get('pattern', rec.get('predicted_pattern'))
+                    if pattern is None:
+                        logger.warning(f"No pattern found for {rec['market']}, skipping")
+                        continue
+                    
+                    predicted_return = np.sum(pattern)
                     error = np.abs(predicted_return - actual_return)
                     
                     all_trades_for_analysis.append({
                         "timestamp": current_time,
                         "market": rec['market'],
+                        "signal": rec.get('signal'),
                         "predicted_return": predicted_return,
                         "actual_return": actual_return,
-                        "uncertainty": rec['uncertainty'],
-                        "confidence": 1 / (1 + rec['uncertainty']),
+                        "uncertainty": rec.get('uncertainty', 0),
+                        "confidence": 1 / (1 + rec.get('uncertainty', 0)),
                         "error": error,
-                        "correct": np.sign(predicted_return) == np.sign(actual_return)
+                        "correct": np.sign(predicted_return) == np.sign(actual_return),
+                        # Gate Analysis (for paper figures)
+                        "gate_value": rec.get('gate_value', 0.5),
+                        "consensus_score": rec.get('consensus_score', 0.6)
                     })
             
             # Simplified portfolio value update for logging
@@ -118,13 +135,24 @@ def run(days_to_backtest: int = 10):
 
     if not all_trades_for_analysis:
         logger.error("Backtest finished with no trades to analyze.")
-        return
+        return False
 
     # 4. --- Performance & Uncertainty Analysis ---
     results_df = pd.DataFrame(all_trades_for_analysis)
-    
-    # Simplified PnL for overall metrics (assumes equal weight, no compounding for clarity)
-    pnl = results_df.apply(lambda row: row['actual_return'] if row['correct'] else -abs(row['actual_return']), axis=1)
+
+    def _calc_trade_pnl(row):
+        # Respect trade direction first. If missing, infer direction from predicted return sign.
+        signal = str(row.get('signal', '')).strip().lower()
+        if signal not in {'long', 'short'}:
+            signal = 'short' if row['predicted_return'] < 0 else 'long'
+        raw_return = float(row['actual_return'])
+        return -raw_return if signal == 'short' else raw_return
+
+    # Direction-aware PnL so short wins are positive and short losses are negative.
+    results_df['pnl'] = results_df.apply(_calc_trade_pnl, axis=1)
+    pnl = results_df['pnl']
+    results_df['correct'] = pnl > 0
+
     sharpe_ratio = (pnl.mean() / (pnl.std() + 1e-9)) * np.sqrt(365*4) # Annualized for 6-hour trades
     win_rate = results_df['correct'].mean() * 100
     
@@ -138,7 +166,9 @@ def run(days_to_backtest: int = 10):
     logger.info("\n--- Backtest Results ---")
     logger.info(f"Period: {days_to_backtest} days")
     logger.info(f"Total Trades Analyzed: {len(results_df)}")
-    logger.info(f"Win Rate: {win_rate:.2f}% ({results_df['correct'].sum()} wins / {len(results_df) - results_df['correct'].sum()} losses)")
+    wins = int(results_df['correct'].sum())
+    losses = int(len(results_df) - wins)
+    logger.info(f"Win Rate: {win_rate:.2f}% ({wins} wins / {losses} losses)")
     logger.info(f"Avg Return per Trade: {pnl.mean():.2%}")
     logger.info(f"Sharpe Ratio (annualized): {sharpe_ratio:.2f}")
     logger.info(f"Max Drawdown: {max_drawdown_pct:.2f}%")
@@ -165,9 +195,16 @@ def run(days_to_backtest: int = 10):
         threshold = np.percentile(results_df['uncertainty'], percentile)
         filtered_df = results_df[results_df['uncertainty'] <= threshold]
         if not filtered_df.empty:
-            profitable_trades = filtered_df[filtered_df['correct']]
-            mean_win_return = profitable_trades['actual_return'].mean() if not profitable_trades.empty else 0.0
+            profitable_trades = filtered_df[filtered_df['pnl'] > 0]
+            mean_win_return = profitable_trades['pnl'].mean() if not profitable_trades.empty else 0.0
             recall = len(filtered_df) / len(results_df)
-            win_rate_filtered = filtered_df['correct'].mean()
+            win_rate_filtered = (filtered_df['pnl'] > 0).mean()
             logger.info(f"Threshold (Top {100-percentile}% Conf): {threshold:.4f} | Kept: {recall:.1%} | Win Rate: {win_rate_filtered:.1%} | Mean Return on Wins: {mean_win_return:+.4f}")
     logger.info("============================================")
+    
+    # --- Export Gate Values for Paper Visualization ---
+    gate_csv_path = os.path.join("analysis", "gate_values.csv")
+    os.makedirs("analysis", exist_ok=True)
+    results_df.to_csv(gate_csv_path, index=False)
+    logger.info(f"Gate analysis data saved to {gate_csv_path} for paper figures.")
+    return True

@@ -30,10 +30,11 @@ def collect_market_data(market: str, days: int = 90):
     last_ts = get_last_timestamp(market)
 
     if last_ts:
-        to_datetime = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        # Upbit "to" supports ISO8601; keep consistent with DB timestamps.
+        to_datetime = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S')
         logger.info(f"Last timestamp for {market} is {last_ts}. Fetching new data up to {to_datetime}.")
     else:
-        to_datetime = (datetime.utcnow() + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
+        to_datetime = (datetime.utcnow() + timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%S')
         logger.info(f"No existing data for {market}. Fetching last {days} days of data.")
 
     all_data = []
@@ -44,9 +45,28 @@ def collect_market_data(market: str, days: int = 90):
             'to': to_datetime
         }
         try:
-            res = requests.get(url, params=params)
-            res.raise_for_status()
-            data = res.json()
+            # Upbit API has historically accepted both "YYYY-MM-DDTHH:MM:SS" and "YYYY-MM-DD HH:MM:SS".
+            # Prefer ISO8601 but retry with a space separator if the server rejects it.
+            data = None
+            last_err = None
+            for _fmt in ("T", " "):
+                params['to'] = to_datetime.replace("T", _fmt)
+                try:
+                    res = requests.get(url, params=params, timeout=10)
+                    res.raise_for_status()
+                    data = res.json()
+                    # Error payload is a dict with an "error" key.
+                    if isinstance(data, dict) and "error" in data:
+                        last_err = RuntimeError(str(data.get("error")))
+                        data = None
+                        continue
+                    break
+                except requests.exceptions.RequestException as e:
+                    last_err = e
+                    data = None
+                    continue
+            if data is None:
+                raise requests.exceptions.RequestException(last_err)
 
             if not data:
                 logger.info(f"No more data to fetch for {market}.")
@@ -77,7 +97,7 @@ def collect_market_data(market: str, days: int = 90):
                 logger.info(f"Collected approximately {days} days of data. Stopping collection.")
                 break
 
-            to_datetime = oldest_ts.strftime('%Y-%m-%d %H:%M:%S')
+            to_datetime = oldest_ts.strftime('%Y-%m-%dT%H:%M:%S')
             time.sleep(0.5)
 
         except requests.exceptions.RequestException as e:
@@ -109,7 +129,7 @@ def get_all_krw_markets():
     logger.info("Fetching all KRW market symbols from Upbit...")
     url = "https://api.upbit.com/v1/market/all"
     try:
-        res = requests.get(url)
+        res = requests.get(url, timeout=10)
         res.raise_for_status()
         data = res.json()
         krw_markets = [item['market'] for item in data if item['market'].startswith('KRW-')]
@@ -136,7 +156,8 @@ def run_all(days: int = 90):
 
 def run(days: int = 90):
     logger.info("=== Starting Data Collection ===")
-    for market in config.TARGET_MARKETS:
+    # Backward-compatible default market set.
+    for market in getattr(config.Data, "TRAIN_COINS", []):
         collect_market_data(market, days)
     logger.info("=== Data Collection Finished ===")
 
@@ -146,7 +167,7 @@ def get_current_price(market: str) -> Optional[float]:
     url = "https://api.upbit.com/v1/ticker"
     params = {"markets": market}
     try:
-        res = requests.get(url, params=params)
+        res = requests.get(url, params=params, timeout=10)
         res.raise_for_status()
         data = res.json()
         if data:

@@ -158,7 +158,7 @@ class ExplainabilityAnalyzer:
             
             # Cluster the prototypes
             n_clusters = min(4, n_prototypes)
-            kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
             clusters = kmeans.fit_predict(prototypes)
             
             scatter = axes[0].scatter(prototypes_2d[:, 0], prototypes_2d[:, 1], 
@@ -225,20 +225,26 @@ class ExplainabilityAnalyzer:
         cnn_sim = float(gate_info.get('cnn_similarity', [[0]])[0][0])
         gate_val = float(gate_info.get('gate_values', [0.5])[0])
         
+        dominant_path = 'Transformer' if gate_val > 0.5 else 'CNN'
         explanation = {
             'transformer_similarity': trans_sim,
             'cnn_similarity': cnn_sim,
             'gate_value': gate_val,
-            'dominant_path': 'Transformer' if gate_val > 0.5 else 'CNN',
+            'dominant_path': dominant_path,
             'interpretation': ''
         }
-        
-        if trans_sim > cnn_sim + 0.1:
-            explanation['interpretation'] = "Transformer detected a familiar global pattern. Using trend-following analysis."
-        elif cnn_sim > trans_sim + 0.1:
-            explanation['interpretation'] = "CNN detected strong local patterns. Using technical signal analysis."
+
+        # Primary explanation follows the actual gate decision.
+        if dominant_path == 'Transformer':
+            if trans_sim >= cnn_sim:
+                explanation['interpretation'] = "Gate selected Transformer and similarity also favors global trend structure."
+            else:
+                explanation['interpretation'] = "Gate selected Transformer despite stronger local similarity; global context dominated."
         else:
-            explanation['interpretation'] = "Both paths show similar confidence. Balanced fusion applied."
+            if cnn_sim >= trans_sim:
+                explanation['interpretation'] = "Gate selected CNN and similarity also favors local pattern signals."
+            else:
+                explanation['interpretation'] = "Gate selected CNN despite stronger global similarity; local signal dominated."
         
         return explanation
     

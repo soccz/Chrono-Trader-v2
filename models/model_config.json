@@ -1,8 +1,14 @@
 {
-    "lr": 0.0008682184915454779,
+    "lr_g": 0.0009078260164140392,
+    "lr_c": 2.54096176739361e-05,
     "d_model": 128,
-    "n_layers": 4,
+    "n_layers": 3,
     "n_heads": 4,
     "batch_size": 32,
-    "lambda_recon": 25.695027157376032
+    "lambda_recon_initial": 24.104286716024102,
+    "lambda_gp_initial": 8.92689943772539,
+    "lambda_ece": 0.4349571173488294,
+    "critic_base_iters": 9,
+    "dropout_p": 0.08400632402025376,
+    "lambda_direction": 0.20276316989372606
 }

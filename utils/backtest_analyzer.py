@@ -91,8 +91,13 @@ class BacktestAnalyzer:
         if 'current_price' not in combined.columns:
             combined['current_price'] = 0
         
+        # Add entry_time alias for compatibility
+        if 'prediction_timestamp' in combined.columns:
+            combined['entry_time'] = combined['prediction_timestamp']
+        
         self._predictions_df = combined
         return combined
+
     
     def _get_price_at_time(self, market: str, timestamp: datetime) -> Optional[float]:
         """특정 시점의 가격 조회"""
@@ -100,7 +105,7 @@ class BacktestAnalyzer:
             query = f"""
                 SELECT close FROM crypto_data 
                 WHERE market = '{market}' 
-                AND timestamp <= '{timestamp.strftime('%Y-%m-%d %H:%M:%S')}'
+                AND timestamp <= '{timestamp.strftime('%Y-%m-%dT%H:%M:%S')}'
                 ORDER BY timestamp DESC LIMIT 1
             """
             result = load_data(query)
@@ -147,12 +152,14 @@ class BacktestAnalyzer:
                 raw_return = -raw_return
             
             results.append({
-                'timestamp': entry_time,
+                'entry_time': entry_time, # Frontend expects entry_time
+                'prediction_timestamp': entry_time,
                 'market': market,
                 'signal': signal,
                 'entry_price': entry_price,
                 'exit_price': exit_price,
-                'return': raw_return,
+                'pnl_percent': raw_return * 100, # Frontend expects pnl_percent, and usually handled as % value (e.g. 5.0 for 5%)
+                'status': 'CLOSED', # Explicitly mark as closed for frontend filter
                 'is_win': raw_return > 0
             })
         
@@ -205,7 +212,7 @@ class BacktestAnalyzer:
         max_drawdown = drawdown.min()
         
         # 4. Win Rate
-        winning_trades = [t for t in trades if t['return'] > 0]
+        winning_trades = [t for t in trades if t['pnl_percent'] > 0]
         win_rate = len(winning_trades) / len(trades) if trades else 0
         
         # 5. Alpha (vs BTC)
@@ -234,8 +241,18 @@ class BacktestAnalyzer:
                 'start': actual_start.isoformat(),
                 'end': actual_end.isoformat()
             },
-            'holding_period': f'{self.HOLDING_PERIOD_HOURS}H'
+            'holding_period': f'{self.HOLDING_PERIOD_HOURS}H',
+            # Include Simulation Data for Charts
+            'trades': trades, 
+            'equity_curve': self._format_equity_for_chart(equity_curve, initial_balance)
         }
+
+    def _format_equity_for_chart(self, equity_curve, initial_balance):
+        if not equity_curve: return []
+        # Sample down if too large, but for now return all
+        return [{'date': x['timestamp'].strftime('%Y-%m-%d %H:%M'), 
+                 'value': round(((x['equity'] - initial_balance)/initial_balance)*100, 2),
+                 'equity': x['equity']} for x in equity_curve]
 
     def _run_simulation(self, df: pd.DataFrame) -> Dict:
         """시간 흐름에 따른 포트폴리오 시뮬레이션"""
@@ -276,8 +293,12 @@ class BacktestAnalyzer:
                             'market': pos['market'],
                             'entry_time': pos['entry_time'],
                             'exit_time': pos['exit_time'],
+                            'entry_price': pos['entry_price'],
+                            'exit_price': exit_price,
                             'profit': profit,
-                            'return': pnl_pct
+                            'pnl_percent': pnl_pct * 100, # Percentage
+                            'status': 'CLOSED',
+                            'signal': pos['signal'] # Useful for frontend
                         })
                     else:
                         # 가격 데이터 없으면 원금 회수 가정 (보수적 접근 or 에러 처리)
@@ -367,20 +388,47 @@ class BacktestAnalyzer:
         df_eq = pd.DataFrame(equity_curve)
         df_eq['month'] = df_eq['timestamp'].dt.to_period('M')
         
+        # Trade Data Parsing
+        trades = sim_result.get('trades', [])
+        df_trades = pd.DataFrame(trades)
+        if not df_trades.empty and 'exit_time' in df_trades.columns:
+            df_trades['exit_time'] = pd.to_datetime(df_trades['exit_time'])
+            df_trades['month'] = df_trades['exit_time'].dt.to_period('M')
+
         monthly_data = []
-        months = df_eq['month'].unique()
+        months = sorted(df_eq['month'].unique())
         
         for m in months:
             month_data = df_eq[df_eq['month'] == m]
+            if month_data.empty: continue
+            
             start_equity = month_data.iloc[0]['equity']
             end_equity = month_data.iloc[-1]['equity']
             monthly_return = (end_equity - start_equity) / start_equity
             
+            # Calculate Trade Stats
+            count = 0
+            win_rate = 0.0
+            profit_factor = 0.0
+            
+            if not df_trades.empty:
+                m_trades = df_trades[df_trades['month'] == m]
+                count = len(m_trades)
+                if count > 0:
+                    wins = m_trades[m_trades['profit'] > 0]
+                    losses = m_trades[m_trades['profit'] <= 0]
+                    win_rate = (len(wins) / count) * 100
+                    
+                    gross_profit = wins['profit'].sum()
+                    gross_loss = abs(losses['profit'].sum())
+                    profit_factor = gross_profit / gross_loss if gross_loss > 0 else 0
+            
             monthly_data.append({
                 'month': str(m),
                 'return': round(monthly_return * 100, 2),
-                'win_rate': 0, # 월별 승률은 복잡해서 생략 or 별도 계산
-                'trade_count': 0
+                'win_rate': round(win_rate, 1), 
+                'trade_count': count,
+                'profit_factor': round(profit_factor, 2)
             })
             
         return monthly_data

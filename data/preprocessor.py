@@ -250,6 +250,112 @@ def get_market_index(start_date=None, end_date=None) -> pd.DataFrame:
         logger.error(f"Failed to calculate market index: {e}")
         return pd.DataFrame()
 
+# --- Global cache for crypto factor returns ---
+_CRYPTO_FACTORS_CACHE = None
+
+def get_crypto_factors(start_date=None, end_date=None) -> pd.DataFrame:
+    """
+    Calculates cross-sectional crypto factor returns adapted from Fama-French.
+    Factors: SIZE (market cap proxy), MOM (momentum), VOL (volatility), LIQ (liquidity).
+    
+    Each factor = Top group return - Bottom group return (long-short portfolio).
+    Calculated per timestamp across all KRW coins in the database.
+    
+    Returns a DataFrame indexed by timestamp with columns:
+        factor_size, factor_mom, factor_vol, factor_liq
+    """
+    global _CRYPTO_FACTORS_CACHE
+    if _CRYPTO_FACTORS_CACHE is not None:
+        return _CRYPTO_FACTORS_CACHE
+    
+    logger.info("Calculating crypto factor returns (SIZE, MOM, VOL, LIQ)...")
+    
+    try:
+        date_filter = ""
+        if start_date and end_date:
+            date_filter = f"AND timestamp BETWEEN '{start_date}' AND '{end_date}'"
+        
+        # Load all KRW coin data
+        query = f"SELECT market, timestamp, close, volume FROM crypto_data WHERE market LIKE 'KRW-%%' {date_filter} ORDER BY timestamp ASC"
+        all_data = load_data(query)
+        
+        if all_data.empty:
+            logger.warning("No data available for crypto factor calculation.")
+            return pd.DataFrame()
+        
+        all_data['timestamp'] = pd.to_datetime(all_data['timestamp']).dt.tz_localize('UTC')
+        
+        # Pivot to wide format: each column = one coin's close price
+        price_pivot = all_data.pivot_table(index='timestamp', columns='market', values='close')
+        volume_pivot = all_data.pivot_table(index='timestamp', columns='market', values='volume')
+        
+        # Need at least 6 coins to form meaningful groups
+        valid_coins = price_pivot.columns[price_pivot.notna().sum() > 168]  # At least 7 days of data
+        if len(valid_coins) < 6:
+            logger.warning(f"Only {len(valid_coins)} coins with sufficient data. Need >= 6 for factor calculation.")
+            return pd.DataFrame()
+        
+        price_pivot = price_pivot[valid_coins]
+        volume_pivot = volume_pivot[valid_coins].reindex(price_pivot.index)
+        
+        # Calculate returns
+        returns = price_pivot.pct_change(fill_method=None).fillna(0)
+        
+        # --- Factor Calculations (per timestamp, cross-sectional) ---
+        factor_df = pd.DataFrame(index=price_pivot.index)
+        
+        # SIZE factor: volume * price as market cap proxy
+        # Long small, short large (SMB style)
+        market_cap_proxy = price_pivot * volume_pivot.fillna(0)  # vol × price ≈ market cap
+        median_cap = market_cap_proxy.median(axis=1)
+        small_mask = market_cap_proxy.lt(median_cap, axis=0)
+        large_mask = ~small_mask
+        factor_df['factor_size'] = (
+            returns.where(small_mask).mean(axis=1) - returns.where(large_mask).mean(axis=1)
+        ).fillna(0)
+        
+        # MOM factor: 7-day momentum (168 hours)
+        # Long winners, short losers (WML style)
+        rolling_return = price_pivot.pct_change(periods=168, fill_method=None).fillna(0)
+        median_mom = rolling_return.median(axis=1)
+        winner_mask = rolling_return.gt(median_mom, axis=0)
+        loser_mask = ~winner_mask
+        factor_df['factor_mom'] = (
+            returns.where(winner_mask).mean(axis=1) - returns.where(loser_mask).mean(axis=1)
+        ).fillna(0)
+        
+        # VOL factor: 24-hour realized volatility
+        # Long low-vol, short high-vol (defensive strategy)
+        rolling_vol = returns.rolling(window=24).std().fillna(0)
+        median_vol = rolling_vol.median(axis=1)
+        low_vol_mask = rolling_vol.lt(median_vol, axis=0)
+        high_vol_mask = ~low_vol_mask
+        factor_df['factor_vol'] = (
+            returns.where(low_vol_mask).mean(axis=1) - returns.where(high_vol_mask).mean(axis=1)
+        ).fillna(0)
+        
+        # LIQ factor: volume-based liquidity
+        # Long liquid, short illiquid
+        volume_ma = volume_pivot.rolling(window=24).mean().fillna(0)
+        median_liq = volume_ma.median(axis=1)
+        liquid_mask = volume_ma.gt(median_liq, axis=0)
+        illiquid_mask = ~liquid_mask
+        factor_df['factor_liq'] = (
+            returns.where(liquid_mask).mean(axis=1) - returns.where(illiquid_mask).mean(axis=1)
+        ).fillna(0)
+        
+        # Clip extreme values
+        for col in ['factor_size', 'factor_mom', 'factor_vol', 'factor_liq']:
+            factor_df[col] = factor_df[col].clip(-0.1, 0.1)
+        
+        _CRYPTO_FACTORS_CACHE = factor_df
+        logger.info(f"Crypto factors calculated. Shape: {factor_df.shape}, Coins used: {len(valid_coins)}")
+        return factor_df
+        
+    except Exception as e:
+        logger.error(f"Failed to calculate crypto factors: {e}")
+        return pd.DataFrame()
+
 def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Calculates technical indicators for the given data using pandas-ta."""
     # Calculate all indicators and store them temporarily
@@ -297,6 +403,18 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # Volume volatility (sudden volume spikes indicate potential moves)
     df['volume_volatility'] = df['volume'].pct_change().rolling(window=24).std()
 
+    # --- New Features (Phase 2 Enhancement) ---
+    # Price position within 20-period range (0=at low, 1=at high)
+    rolling_high = df['close'].rolling(window=480).max()  # 20 days * 24h
+    rolling_low = df['close'].rolling(window=480).min()
+    df['price_position'] = ((df['close'] - rolling_low) / (rolling_high - rolling_low + 1e-10)).clip(0, 1)
+
+    # Volume ratio: current volume vs 20-period MA (spike detection)
+    df['volume_ratio'] = (df['volume'] / (volume_ma + 1e-10)).clip(0, 10)
+
+    # Return skewness over 24h (asymmetry → potential breakout signal)
+    df['return_skew_24h'] = df['close'].pct_change().rolling(window=24).skew()
+
     df.fillna(0, inplace=True)
     return df
 
@@ -309,11 +427,14 @@ def create_sequences(data, sequence_length, future_window):
         ys.append(y)
     return np.array(xs), np.array(ys)
 
-def get_intermediate_data(market: str, market_index_df: pd.DataFrame, historical_df: pd.DataFrame = None):
+def get_intermediate_data(market: str, market_index_df: pd.DataFrame, historical_df: pd.DataFrame = None, crypto_factors_df: pd.DataFrame = None):
     """
     Loads and preprocesses data for a market up to the point of feature calculation.
     If historical_df is provided, it uses that dataframe; otherwise, it queries the database.
     Ensures all timezone information is consistent (UTC) before processing.
+    
+    Args:
+        crypto_factors_df: Optional pre-calculated crypto factor returns (from get_crypto_factors).
     """
     logger.info(f"Processing intermediate data for market: {market}")
     
@@ -364,6 +485,24 @@ def get_intermediate_data(market: str, market_index_df: pd.DataFrame, historical
     df['historical_similarity'] = historical_similarities
     logger.info(f"Historical similarity calculated. Mean: {df['historical_similarity'].mean():.4f}")
 
+    # Cross-correlation with market index (rolling 24h)
+    df['cross_corr_btc'] = df['coin_return'].rolling(window=24).corr(df['market_index_return']).fillna(0).clip(-1, 1)
+
+    # --- Join Crypto Factor Returns (FF-adapted) ---
+    if crypto_factors_df is not None and not crypto_factors_df.empty:
+        if crypto_factors_df.index.tz is None:
+            crypto_factors_df.index = crypto_factors_df.index.tz_localize('UTC')
+        df = df.join(crypto_factors_df, how='left')
+        for col in ['factor_size', 'factor_mom', 'factor_vol', 'factor_liq']:
+            if col not in df.columns:
+                df[col] = 0.0
+            df[col] = df[col].fillna(0)
+    else:
+        df['factor_size'] = 0.0
+        df['factor_mom'] = 0.0
+        df['factor_vol'] = 0.0
+        df['factor_liq'] = 0.0
+
     df['future_pct_change'] = (df['close'].shift(-1) - df['close']) / df['close']
     df.fillna(0, inplace=True)
     
@@ -380,7 +519,9 @@ def create_final_sequences_and_scale(df: pd.DataFrame, scaler: MinMaxScaler):
         'market_index_return', 'historical_similarity',  # Context features (must match config.FEATURE_COLUMNS order)
         'bb_upper', 'bb_middle', 'bb_lower', 'volume_ma',
         'volatility_24h', 'volatility_7d', 'volume_volatility',
-        'alpha', 'beta'
+        'alpha', 'beta',
+        'price_position', 'volume_ratio', 'return_skew_24h', 'cross_corr_btc',
+        'factor_size', 'factor_mom', 'factor_vol', 'factor_liq'
     ]
     
     features_to_scale = [f for f in features_to_scale if f in df.columns]
@@ -403,8 +544,10 @@ def create_final_sequences_and_scale(df: pd.DataFrame, scaler: MinMaxScaler):
 
 def get_processed_data_for_training(market: str, market_index_df: pd.DataFrame):
     """Wrapper function for training that calls the refactored processing steps."""
+    # Calculate crypto factor returns for training context
+    crypto_factors_df = get_crypto_factors()
     # Pass historical_df=None to ensure it queries the DB for fresh training data
-    df, scaler = get_intermediate_data(market, market_index_df, historical_df=None)
+    df, scaler = get_intermediate_data(market, market_index_df, historical_df=None, crypto_factors_df=crypto_factors_df)
     if df is None:
         return None, None, None
     
@@ -417,7 +560,18 @@ def get_recent_pattern(market: str, current_time: datetime, hours: int = config.
     Returns a 1D numpy array of percentage changes for the last 'hours' period.
     """
     # Need hours + 1 data points to calculate 'hours' percentage changes
-    query = f"SELECT timestamp, close FROM crypto_data WHERE market = '{market}' AND timestamp <= '{current_time}' ORDER BY timestamp DESC LIMIT {hours + 1}"
+    # DB timestamps are stored as ISO strings "YYYY-MM-DDTHH:MM:SS"
+    if isinstance(current_time, pd.Timestamp):
+        current_time = current_time.to_pydatetime()
+    if isinstance(current_time, datetime):
+        current_time_s = current_time.strftime('%Y-%m-%dT%H:%M:%S')
+    else:
+        current_time_s = str(current_time)
+    query = (
+        "SELECT timestamp, close FROM crypto_data "
+        f"WHERE market = '{market}' AND timestamp <= '{current_time_s}' "
+        f"ORDER BY timestamp DESC LIMIT {hours + 1}"
+    )
     df = load_data(query)
     
     if df.empty or len(df) < (hours + 1):

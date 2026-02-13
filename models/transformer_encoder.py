@@ -62,9 +62,11 @@ class AttentionExtractorEncoderLayer(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
         self.activation = nn.ReLU()
     
-    def forward(self, src, return_attention=False):
+    def forward(self, src, return_attention=False, attn_mask=None):
         # Self-attention with optional attention weight return
-        src2, attn_weights = self.self_attn(src, src, src, need_weights=return_attention)
+        src2, attn_weights = self.self_attn(
+            src, src, src, attn_mask=attn_mask, need_weights=return_attention
+        )
         src = src + self.dropout1(src2)
         src = self.norm1(src)
         
@@ -79,7 +81,7 @@ class AttentionExtractorEncoderLayer(nn.Module):
 
 
 class TransformerEncoder(nn.Module):
-    def __init__(self, input_dim, d_model, n_heads, n_layers, dropout=0.1, context_dim=0, use_causal_mask=False):
+    def __init__(self, input_dim, d_model, n_heads, n_layers, dropout=0.1, context_dim=0, use_causal_mask=True):
         super(TransformerEncoder, self).__init__()
         self.d_model = d_model
         self.use_causal_mask = use_causal_mask
@@ -109,20 +111,24 @@ class TransformerEncoder(nn.Module):
         # src shape: (batch_size, seq_len, input_dim)
         src = self.encoder_layer(src) * math.sqrt(self.d_model)
         src = self.pos_encoder(src, context=context)
+
+        attn_mask = None
+        if self.use_causal_mask:
+            attn_mask = self._generate_causal_mask(src.size(1), src.device)
         
         attention_weights = []
         for layer in self.layers:
             if return_attention:
-                src, attn = layer(src, return_attention=True)
+                src, attn = layer(src, return_attention=True, attn_mask=attn_mask)
                 attention_weights.append(attn)
             else:
-                src = layer(src, return_attention=False)
+                src = layer(src, return_attention=False, attn_mask=attn_mask)
         
         if return_attention:
             return src, attention_weights
         return src
 
-def build_transformer_encoder(input_dim, d_model, n_heads, n_layers, dropout_p, context_dim=0, use_causal_mask=False):
+def build_transformer_encoder(input_dim, d_model, n_heads, n_layers, dropout_p, context_dim=0, use_causal_mask=True):
     return TransformerEncoder(
         input_dim=input_dim,
         d_model=d_model,
@@ -132,4 +138,3 @@ def build_transformer_encoder(input_dim, d_model, n_heads, n_layers, dropout_p, 
         context_dim=context_dim,
         use_causal_mask=use_causal_mask
     )
-

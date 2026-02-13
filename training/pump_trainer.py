@@ -8,9 +8,18 @@ import os
 import json
 import optuna
 import functools
+import torch
 
 from data.preprocessor import get_pump_dataset
 from utils.logger import logger
+
+def _xgb_runtime_params() -> dict:
+    """
+    Select compute-aware XGBoost runtime parameters.
+    """
+    if torch.cuda.is_available():
+        return {'tree_method': 'gpu_hist'}
+    return {'tree_method': 'hist', 'n_jobs': max(1, (os.cpu_count() or 2) - 1)}
 
 def objective(trial, X_train, y_train, X_val, y_val):
     """Optuna objective function to find the best hyperparameters for XGBoost."""
@@ -18,8 +27,7 @@ def objective(trial, X_train, y_train, X_val, y_val):
         'objective': 'multi:softprob',
         'num_class': 4,
         'eval_metric': 'mlogloss',
-        'use_label_encoder': False,
-        'tree_method': 'gpu_hist', # Use GPU for training
+        **_xgb_runtime_params(),
         'n_estimators': trial.suggest_int('n_estimators', 200, 800),
         'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.2, log=True),
         'max_depth': trial.suggest_int('max_depth', 3, 10),
@@ -95,7 +103,7 @@ def run(tune: bool = False):
     logger.info("--- Training XGBoost with best parameters ---")
     final_params = {
         'objective': 'multi:softprob', 'num_class': 4, 'eval_metric': 'mlogloss',
-        'use_label_encoder': False, 'tree_method': 'gpu_hist', **params
+        **_xgb_runtime_params(), **params
     }
     
     model = xgb.XGBClassifier(**final_params)

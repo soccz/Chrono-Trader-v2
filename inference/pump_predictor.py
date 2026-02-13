@@ -5,6 +5,7 @@ import os
 from data.database import load_data
 from data.preprocessor import calculate_technical_indicators, create_pump_features, get_market_index
 from utils.logger import logger
+from utils.config import config
 
 def run():
     """Loads the trained multi-class pump classifier and predicts pump distribution."""
@@ -72,7 +73,7 @@ def run():
             probabilities = model.predict_proba(X_latest)[0]
             total_pump_prob = probabilities[1:].sum()
 
-            if total_pump_prob > 0.2: # Example threshold
+            if total_pump_prob > config.Recommender.PUMP_PROBABILITY_THRESHOLD: # Example threshold
                 potential_pumps.append({
                     'market': market,
                     'current_price': latest_features['close'].iloc[0],
