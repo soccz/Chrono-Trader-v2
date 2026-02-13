@@ -13,6 +13,12 @@ AETHER is built to represent these two forces simultaneously and to produce reco
 
 Core idea: treat the problem as **pattern localization in time** ("where are we in a known historical motif?") while conditioning on **macro context** (BTC/ETH index), then route decisions through an **explainable hybrid model** and a strict recommendation funnel.
 
+## 1. Introduction
+
+Most single-model approaches implicitly choose an inductive bias: either prioritize global dependencies (trend/regime) or focus on local motifs (shape-level patterns). In practice, crypto price action alternates: sometimes the macro tape dominates, and sometimes local microstructure motifs dominate.
+
+AETHER explicitly represents both views and exposes a routing variable (gate) to support debugging and iterative refinement. Separately, it treats operational failure modes (stale data, network loss, long-running tasks) as first-class constraints of the system.
+
 ## Problem Setting
 
 Given an hourly sequence window (168h) of engineered features for a market, predict a multi-step future return path (6h horizon) and produce a small set of ranked recommendations.
@@ -24,6 +30,18 @@ Design constraints:
 - Each scheduled run must emit at least one output item (trade or watch-only), to keep automation consistent.
 
 ## Method Overview
+
+High-level block diagram:
+
+```text
+Upbit/DB candles
+  -> feature engineering (macro + factors + technicals)
+  -> hybrid encoder: Transformer (global) + CNN (local)
+  -> explainable gated fusion
+  -> generator: multi-step return path (6h)
+  -> uncertainty estimation + staged recommendation funnel
+  -> ranked outputs (trade or watch-only)
+```
 
 ### Context Features (Macro + Memory)
 
@@ -72,6 +90,37 @@ In unattended scheduling, failure modes are first-class. AETHER enforces:
 - minimum-output policy (MinRec) so each scheduled run emits at least one item
 
 Operational contract and exit codes: `OPS_ACCEPTANCE.md`.
+
+## Related Work (Conceptual Positioning)
+
+This project is conceptually adjacent to:
+- **Time-series Transformers**: global dependency modeling and long-range context extraction.
+- **CNN/TCN-style local motif extractors**: pattern primitives and shape-level inductive bias.
+- **Gating / mixture-of-experts routing**: conditional computation or conditional blending between representations.
+- **Probabilistic forecasting**: generating distributions or scenarios rather than single-point estimates.
+- **Uncertainty estimation and calibration**: MC-dropout-style epistemic proxies and post-hoc calibration metrics (e.g., ECE).
+- **Factor models**: market-relative decomposition and cross-sectional premia signals (FF-style construction adapted to crypto).
+
+The intended contribution is not a new theorem; it is a coherent integration where representation learning, decision filtering, and operational reliability are aligned under a single contract.
+
+## Assumptions
+
+The system (and the evaluation) implicitly assumes:
+- **Timestamp integrity**: candle timestamps are aligned and monotonic; joins across markets and index series use the same time basis.
+- **No leakage**: features use only information available at decision time (especially similarity/memory features).
+- **Stable symbol universe**: market listings/delistings and “tradeable” status are handled consistently.
+- **Sufficient liquidity**: liquidity thresholds approximate tradability; extreme slippage is not fully modeled.
+- **Operational environment**: scheduled jobs run on a host with stable clock/timezone configuration and persistent storage.
+
+## Threats to Validity
+
+Threats that can invalidate conclusions or inflate backtest performance:
+- **Backtest bias**: simplified fills, slippage, and fee modeling; ignoring partial fills and orderbook impact.
+- **Selection bias**: screening top markets by recent activity can change the effective distribution over time.
+- **Hyperparameter overfitting**: long Optuna runs can overfit to a particular window/split configuration.
+- **Non-stationarity**: regime changes may invalidate tuned parameters quickly; performance may not transfer.
+- **Data quality drift**: missing candles, API/DB staleness, and symbol mapping changes can alter feature semantics.
+- **Metric mismatch**: optimizing proxy objectives (e.g., uncertainty correlation) may not align with trading utility.
 
 ## Strengths
 
