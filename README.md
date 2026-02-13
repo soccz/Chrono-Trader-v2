@@ -1,169 +1,107 @@
-# AETHER (Chrono-Trader)
+# AETHER (Chrono-Trader v2)
 
-Explainable, production-minded crypto forecasting and recommendation system.
+Explainable, ops-oriented crypto forecasting and recommendation system.
 
-This repository is designed around a single operational constraint:
-scheduled runs must be predictable (no hangs), freshness-aware, and must always emit at least one output item even when the data/network is degraded.
+This README intentionally focuses on ideas, design logic, and research direction (paper-style). For operational usage details, see `USAGE_GUIDE.md` / `사용가이드.md`.
 
 Not financial advice.
 
 ## Abstract
 
-Crypto markets are non-stationary: regimes shift, correlations drift, and the same local pattern can mean different things depending on the macro tape.
-AETHER models this by combining (1) global context signals, (2) local pattern extractors, and (3) explicit uncertainty signals to route the system through an explainable decision funnel.
+Markets exhibit both trend-level structure and local motif repetition. In crypto, macro drift often appears first in leaders (e.g., BTC/ETH) and then propagates to followers, while idiosyncratic local patterns still dominate many moves.
+AETHER is built to represent these two forces simultaneously and to produce recommendations that are (a) uncertainty-aware and (b) operationally robust under degraded data/network conditions.
 
-At a high level:
-- **Context features**: BTC/ETH market index return + historical similarity (pattern memory) + CAPM-like alpha/beta + crypto FF-style factors
-- **Hybrid encoder**: Transformer (global) + CNN (local) fused by an **explainable gate**
-- **Probabilistic decoder**: GAN-style generator + MC-Dropout uncertainty estimation
-- **Ops-first runtime**: watchdogs + freshness gates + safe watch-only fallback + MinRec output guarantee
+Core idea: treat the problem as **pattern localization in time** ("where are we in a known historical motif?") while conditioning on **macro context** (BTC/ETH index), then route decisions through an **explainable hybrid model** and a strict recommendation funnel.
 
-## Key Contributions (Engineering + Research)
+## Problem Setting
 
-1. **Contextual time-series representation**
-   - market index return + pattern similarity treated as macro context for regime-aware modeling.
-2. **Hybrid representation learning**
-   - Transformer for global structure and CNN for local motifs, fused via a gated mechanism that can be inspected.
-3. **Uncertainty-aware filtering**
-   - recommendations are produced through a multi-stage funnel where uncertainty acts as a hard constraint.
-4. **Production-grade scheduling contract**
-   - freshness gates, timeouts, overlap locks, and a minimum-output policy suitable for unattended daily operation.
+Given an hourly sequence window (168h) of engineered features for a market, predict a multi-step future return path (6h horizon) and produce a small set of ranked recommendations.
 
-## Documentation Map
+Design constraints:
+- Regimes change; features must capture both macro and micro structure.
+- Predictions must carry uncertainty, and filtering must respect it.
+- Scheduled runs must not hang, must enforce data freshness, and must degrade safely.
+- Each scheduled run must emit at least one output item (trade or watch-only), to keep automation consistent.
 
-- Architecture: `PROJECT_ARCHITECTURE.md`
-- Ops contract (exit codes, artifacts, freshness, MinRec): `OPS_ACCEPTANCE.md`
-- Evaluation protocol: `EVAL_PROTOCOL.md`
-- systemd scheduling: `deploy/systemd/README.md`
-- Usage (EN): `USAGE_GUIDE.md`
-- Usage (KR): `사용가이드.md`
+## Method Overview
 
-## System Architecture
+### Context Features (Macro + Memory)
 
-### End-to-End (Data → Model → Recommendations → Ops Health)
+We form a macro tape proxy and a "pattern memory" signal:
+- **Market index return**: a market-cap-like index from BTC/ETH (proxy for the global trend).
+- **Historical similarity**: similarity of the recent macro-return window against a memory bank of past windows (pattern localization).
 
-```mermaid
-flowchart LR
-  subgraph Data
-    Upbit[(Upbit API)] --> Collector[data/collector.py]
-    Collector --> DB[(SQLite: data/crypto_data.db)]
-  end
+We augment with market-relative and cross-sectional structure:
+- **alpha/beta** style features (market-relative movement)
+- **crypto FF-style factors** (size/momentum/volatility/liquidity premia proxies)
 
-  subgraph Features
-    DB --> Preprocess[data/preprocessor.py]
-    Preprocess --> X["168h x 27 features"]
-  end
+Source of truth for the full feature set: `utils/config.py` (`config.Data.FEATURE_COLUMNS`).
 
-  subgraph Modeling
-    X --> Predictor[inference/predictor.py]
-    Predictor --> Recommender[inference/recommender.py]
-  end
+### Hybrid Representation Learning (Global + Local)
 
-  subgraph Artifacts
-    Recommender --> CSV[recommendations/*.csv]
-    Recommender --> Metrics[analysis/run_markets_metrics_*.jsonl]
-  end
+We encode the same sequence through two complementary views:
 
-  subgraph Ops
-    Scheduler[scripts/run_scheduled.py] --> Refresh[main.py --mode refresh-db]
-    Scheduler --> Infer[main.py --mode intraday|morning-report]
-    Metrics --> Health[scripts/ops_healthcheck.py]
-    Health --> Alert[Telegram (optional)]
-  end
+```text
+Input (168h x 27 features)
+  |-> Transformer encoder (global structure / regime-level dependencies)
+  |-> CNN stack (local motifs / shape primitives)
+  `-> Explainable gated fusion (route / weight the two views)
+  `-> Generator (GAN-style decoder) -> 6-step return path
 ```
 
-### Model (Hybrid Encoder + Explainable Gate + Generator)
+The fusion gate is treated as an interpretable variable: when the system leans on local vs global representations, we can attribute which representation dominated the output.
 
-```mermaid
-flowchart TB
-  X["Input: 168h x 27 features"] --> T["Transformer Encoder (global)"]
-  X --> C["CNN stack (local patterns)"]
+### Uncertainty-Aware Decision Funnel
 
-  T --> F["Explainable Gated Fusion"]
-  C --> F
+Predictions do not directly become trades. They pass through a staged funnel where uncertainty and operational constraints act as hard filters:
+- tradeable validation
+- regime/lead-lag heuristics (macro + micro)
+- liquidity constraints
+- expected-return constraints
+- uncertainty constraints
+- (optional) similarity / pattern checks
 
-  F --> G["Generator (GAN-style decoder)"]
-  G --> Y["Output: 6-step return path + uncertainty"]
-```
+This separation (modeling vs decision) makes the system easier to stabilize in production.
 
-### Scheduled Ops Contract (Failure Modes Are First-Class)
+## Ops Contract (Production Constraint)
 
-```mermaid
-flowchart TD
-  Timer[systemd timer] --> Run[scripts/run_scheduled.py]
-  Run --> Refresh[refresh-db (watchdog)]
-  Run --> Infer[intraday|morning-report (watchdog)]
-  Infer -->|exit 0| OK[Artifacts written]
-  Infer -->|exit 2 stale| Retry[rerun once: allow_stale + watch-only]
-  Infer -->|exit 3 timeout| Alert[ops alert]
-  Retry --> OK
-```
+In unattended scheduling, failure modes are first-class. AETHER enforces:
+- watchdog timeouts
+- freshness gates (stale DB abort with a distinct exit code)
+- safe fallback to watch-only on stale/offline runs
+- minimum-output policy (MinRec) so each scheduled run emits at least one item
 
-## Features
+Operational contract and exit codes: `OPS_ACCEPTANCE.md`.
 
-The core model consumes `config.Data.FEATURE_COLUMNS` (currently 27 features). Highlights:
-- **Context**: `market_index_return`, `historical_similarity`
-- **Market-relative**: `alpha`, `beta`
-- **Crypto FF-style factors**: `factor_size`, `factor_mom`, `factor_vol`, `factor_liq`
+## Strengths
 
-For a precise, source-of-truth list: `utils/config.py`.
+- **Hybrid bias**: global trend modeling and local motif extraction are not forced into a single inductive bias.
+- **Explainable routing**: the gate exposes which representation dominated, improving debuggability.
+- **Uncertainty as a constraint**: filtering is explicitly uncertainty-aware rather than post-hoc.
+- **Ops resilience**: stable scheduled automation (timeouts, freshness gates, safe fallback, minimum-output guarantee).
 
-## Quickstart (Local)
+## Limitations (Current)
 
-```bash
-python -m pip install -r requirements.txt
-python main.py --mode init_db
-python main.py --mode refresh-db --refresh_days 7
-python main.py --mode intraday --min_k 1 --limit 8
-```
+- **Compute cost**: Optuna trials are expensive on CPU (5-fold CV, MC-Dropout).
+- **Backtest realism**: simplified fills/slippage and incomplete microstructure effects may overstate performance.
+- **Context fragility**: macro context features can help or hurt depending on regime and alignment; leakage/clock alignment must be audited continuously.
+- **Exchange dependency**: data collection and tradeability are tailored to Upbit-style market data.
 
-## Scheduled Ops (Production)
+## Roadmap (Research Direction)
 
-Preferred entrypoint:
-- `scripts/run_scheduled.py`
+1. **Macro context redesign**
+   - multi-scale context (daily/4h/1h) embeddings, regime state separation, and explicit delay/propagation modeling.
+2. **Factor model stabilization**
+   - robust factor construction under thin liquidity, shrinkage/regularization, and regime-conditioned factor weighting.
+3. **Calibration + probabilistic outputs**
+   - tighter coupling between uncertainty calibration (ECE), decision thresholds, and realized outcomes.
+4. **Evaluation hardening**
+   - leak checks, fixed end-time backtests for fair ablations, cost models (fees/slippage), and walk-forward stress suites.
+5. **Operational autonomy**
+   - continuous health reporting, automated rollback to prior weights, and better market rotation criteria for "top-N" refresh pools.
 
-Preferred scheduler:
-- systemd user timers in `deploy/systemd/`
+## Where To Look Next (Source of Truth)
 
-Notes:
-- The unit files include absolute paths (host-specific). See `deploy/systemd/README.md` to adapt.
-
-## Training + Optuna (Long Runs)
-
-Full training from DB only (recommended for stability/offline):
-```bash
-python main.py --mode train --no_collect --offline_ok
-```
-
-Optuna tuning (resumable via SQLite):
-```bash
-export AETHER_OPTUNA_TRIALS=200
-export AETHER_OPTUNA_STORAGE=sqlite:///analysis/optuna_full.db
-export AETHER_OPTUNA_STUDY_NAME=aether_optuna_full
-export AETHER_OPTUNA_LOAD_IF_EXISTS=1
-python main.py --mode train --tune --no_collect --offline_ok
-```
-
-End-to-end long pipeline (detach):
-```bash
-python scripts/optuna_full_run.py --tag long --optuna_trials 200 --no_telegram --run_ablation --detach
-tail -n 200 logs/optuna_full_long_*.log
-```
-
-## Evaluation
-
-```bash
-python main.py --mode backtest --days 30
-python scripts/eval_suite.py --days 30 --stride_hours 4 --tag eval_30d_4h --no_telegram
-python scripts/ablation_suite.py --days 7 --stride_hours 4 --tag abl_7d_4h --include_no_context --no_telegram
-```
-
-## Repository Layout
-
-- `main.py`: CLI entrypoint (train / refresh-db / intraday / morning-report / backtest)
-- `data/`: DB + collectors + feature engineering
-- `models/`: model definitions + ensemble configs
-- `inference/`: predictor + recommender funnel
-- `training/`: trainer + evaluator (backtest engine)
-- `scripts/`: ops runners, validation, healthcheck, eval/ablation, automation
-- `deploy/systemd/`: systemd (user) timers/services for scheduled ops
+- Full architecture definition: `PROJECT_ARCHITECTURE.md`
+- Learning/eval contract: `EVAL_PROTOCOL.md`
+- Ops contract: `OPS_ACCEPTANCE.md`
