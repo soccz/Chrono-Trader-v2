@@ -29,7 +29,7 @@ AETHER explicitly represents both views through an attention + TCN hybrid and ex
 
 ## Problem Setting
 
-Given an hourly sequence window (168h) of engineered features for a market, predict a multi-step future return path (**3h horizon**) and produce a small set of ranked recommendations.
+Given an hourly sequence window (168h) of engineered features for a market, predict a multi-step future return path (**12h horizon**) and produce a small set of ranked recommendations.
 
 Design constraints:
 - Regimes change; features must capture both macro and micro structure.
@@ -47,7 +47,7 @@ Upbit/DB candles
   -> feature engineering (macro + factors + technicals)
   -> hybrid encoder: Transformer (global) + CNN (local)
   -> explainable gated fusion + FiLM regime conditioning
-  -> generator: multi-step return path (3h)
+  -> generator: multi-step return path (12h)
   -> uncertainty estimation (PI_80) + staged recommendation funnel
   -> net-alpha filter (gross - fee - slippage) + soft downside-risk score
   -> ranked outputs with attention_top3 + prototype_match (trade or watch-only)
@@ -163,9 +163,27 @@ Threats that can invalidate conclusions or inflate backtest performance:
 - **Short data history**: dynamic universe alts have ~6 months of data; regime/factor signals need longer history to stabilize.
 - **Exchange dependency**: data collection and tradeability are tailored to Upbit-style market data.
 
+## Current Status (2026-04)
+
+IC analysis on holdout (Oct 2025 – Jan 2026, 17 markets) showed raw IC = −0.06, Short IC = −0.16.
+The GAN+Transformer phase is complete. Short 58% win rate was market beta (BTC −22% during test period), not alpha.
+Signal limit is feature quality and predictability at 12h, not model architecture.
+
+**Next direction: cross-sectional factor model.**
+Rank 200+ coins by momentum/liquidity/volatility factors, long top decile / short bottom decile, neutralize market beta.
+IC measurable in minutes (vs 22h backtest cycle). Existing features (`rank_return_4h`, `breadth_ratio`, etc.) are reusable.
+
+The ops infrastructure (scheduler, dashboard, data pipeline) remains in place and carries over to the new strategy.
+
+---
+
 ## Roadmap (Research Direction)
 
-1. **Macro context redesign**
+1. **Cross-sectional factor model** *(next immediate step)*
+   - Rank-based long/short on momentum, liquidity, volatility factors
+   - XGBoost or Ridge regression on cross-sectional ranks
+   - IC as primary evaluation metric
+2. **Macro context redesign**
    - multi-scale context (daily/4h/1h) embeddings, regime state separation, and explicit delay/propagation modeling.
 2. **Factor model stabilization**
    - robust factor construction under thin liquidity, shrinkage/regularization, and regime-conditioned factor weighting.
