@@ -4,7 +4,7 @@ This guide provides detailed instructions on how to use the different modes of t
 
 ## ⏱ Scheduled Ops (`intraday`, `morning-report`)
 
-Production scheduling should use the ops entrypoint `scripts/run_scheduled.py` (it runs `refresh-db` then inference, enforces watchdogs/freshness, and guarantees >=1 output per run via MinRec/watch-only fallback).
+Production scheduling should use the ops entrypoint `scripts/run_ops_job.py` (it resolves the repo Python runtime, then runs `scripts/run_scheduled.py` for `refresh-db` + inference with freshness/watch-only fallback).
 
 Recommended on-host scheduler:
 - systemd (user timers): see `deploy/systemd/README.md`
@@ -14,15 +14,55 @@ Manual run examples:
 # Refresh recent DB candles (network required unless DB is already fresh)
 python main.py --mode refresh-db --refresh_days 3 --offline_ok
 
-# Intraday scheduled inference (best run via scripts/run_scheduled.py)
-python main.py --mode intraday --min_k 1 --limit 8
+# Intraday scheduled inference (recommended ops entrypoint)
+python scripts/run_ops_job.py --job intraday --limit 8 --lookback_days 1 --min_k 1
 
 # Morning report scheduled inference
-python main.py --mode morning-report --min_k 1 --limit 8
+python scripts/run_ops_job.py --job morning-report --limit 8 --lookback_days 1 --min_k 1
+
+# Inspect the exact scheduled commands without running network jobs
+python scripts/run_ops_job.py --job intraday --dry_run
 ```
 
 Operational contract (exit codes/artifacts/fallback behavior):
 - `OPS_ACCEPTANCE.md`
+
+## 🌐 Web UI
+
+Default local web port:
+- `5001`
+
+Run on host:
+```bash
+cd /mnt/20t/main/gan_t
+source .venv_local/bin/activate
+python app.py
+```
+
+Override host/port if needed:
+```bash
+AETHER_WEB_HOST=0.0.0.0 AETHER_WEB_PORT=5001 python app.py
+```
+
+SSH port forwarding from your local machine:
+```bash
+ssh -L 5001:127.0.0.1:5001 soccz@163.239.25.170
+```
+
+Then open in your local browser:
+```text
+http://127.0.0.1:5001
+```
+
+If you want to keep using local port `5000`, forward it to the server's `5001`:
+```bash
+ssh -L 5000:127.0.0.1:5001 soccz@163.239.25.170
+```
+
+Then open:
+```text
+http://127.0.0.1:5000
+```
 
 ## 🚀 Daily Prediction (`daily`)
 

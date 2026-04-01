@@ -1,0 +1,297 @@
+/*
+ * Backtest Report Styles
+ * Theme: Professional Research Paper
+ */
+
+/* ===== Period Tab Styling ===== */
+.period-tabs {
+    display: flex;
+    gap: 0.5rem;
+    background: var(--surface-hover);
+    padding: 4px;
+    border-radius: 12px;
+}
+
+.period-tab {
+    padding: 8px 16px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.9rem;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.period-tab:hover {
+    color: var(--text-main);
+}
+
+.period-tab.active {
+    background: var(--ct-primary);
+    color: white;
+    box-shadow: 0 2px 8px rgba(49, 130, 246, 0.3);
+}
+
+/* ===== Weekly Summary List ===== */
+.week-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.week-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    background: var(--surface-hover);
+    border-radius: 12px;
+    border: 1px solid var(--glass-border);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.week-item:hover {
+    border-color: var(--ct-primary);
+    transform: translateX(4px);
+}
+
+.week-item.active {
+    border-color: var(--ct-primary);
+    background: rgba(49, 130, 246, 0.08);
+}
+
+.week-label {
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.week-stats {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.85rem;
+}
+
+.week-pnl {
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.week-pnl.positive {
+    color: var(--up);
+}
+
+.week-pnl.negative {
+    color: var(--down);
+}
+
+.backtest-container {
+    padding-bottom: 4rem;
+    display: flex;
+    justify-content: center;
+}
+
+/* --- Report Paper Layout --- */
+.report-paper {
+    background: #ffffff;
+    color: #1a1a1a;
+    width: 100%;
+    max-width: 210mm;
+    /* A4 Width */
+    min-height: 297mm;
+    padding: 60px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+    border-radius: 4px;
+    font-family: 'Times New Roman', Times, serif;
+    /* Academic feel */
+}
+
+/* --- Header Section --- */
+.report-header-section {
+    border-bottom: 2px solid #000;
+    margin-bottom: 3rem;
+    padding-bottom: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+}
+
+.report-title {
+    font-size: 2.5rem;
+    font-weight: 900;
+    color: #000;
+    margin: 0;
+    line-height: 1.2;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+}
+
+.report-subtitle {
+    font-size: 1rem;
+    color: #555;
+    margin-top: 5px;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+}
+
+.report-meta {
+    text-align: right;
+    font-size: 0.9rem;
+    color: #555;
+}
+
+/* --- Sections --- */
+.report-section {
+    margin-bottom: 3rem;
+}
+
+.section-heading {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #000;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 0.5rem;
+    margin-bottom: 1.5rem;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* --- Executive Summary Grid --- */
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-bottom: 2rem;
+    background: #f8f9fa;
+    padding: 20px;
+    border: 1px solid #e9ecef;
+}
+
+.summary-item {
+    text-align: center;
+}
+
+.summary-label {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    color: #666;
+    letter-spacing: 0.05em;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+}
+
+.summary-value {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: #2c3e50;
+    margin-top: 5px;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* --- Chart --- */
+.chart-container {
+    position: relative;
+    height: 350px;
+    width: 100%;
+    margin-bottom: 1rem;
+    border: 1px solid #eee;
+    padding: 10px;
+}
+
+.chart-caption {
+    font-style: italic;
+    color: #666;
+    font-size: 0.9rem;
+    text-align: center;
+}
+
+/* --- Formal Table --- */
+.report-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+}
+
+.report-table th {
+    background-color: #f1f3f5;
+    color: #333;
+    font-weight: 600;
+    padding: 12px;
+    text-align: left;
+    border-bottom: 2px solid #ddd;
+}
+
+.report-table td {
+    padding: 12px;
+    border-bottom: 1px solid #eee;
+    color: #333;
+}
+
+.report-table tr:last-child td {
+    border-bottom: 2px solid #333;
+}
+
+.text-end {
+    text-align: right !important;
+}
+
+.text-center {
+    text-align: center !important;
+}
+
+.positive {
+    color: #198754;
+    font-weight: 600;
+}
+
+.negative {
+    color: #dc3545;
+    font-weight: 600;
+}
+
+/* --- Footer --- */
+.report-footer {
+    margin-top: 4rem;
+    border-top: 1px solid #ccc;
+    padding-top: 1rem;
+    font-size: 0.8rem;
+    color: #888;
+    text-align: center;
+    font-style: italic;
+}
+
+/* --- Print Handling --- */
+@media print {
+    body * {
+        visibility: hidden;
+    }
+
+    .backtest-container,
+    .report-paper,
+    .report-paper * {
+        visibility: visible;
+    }
+
+    .backtest-container {
+        position: absolute;
+        left: 0;
+        top: 0;
+        padding: 0;
+    }
+
+    .report-paper {
+        box-shadow: none;
+        margin: 0;
+        max-width: 100%;
+        min-height: auto;
+    }
+
+    /* Hide UI elements */
+    header,
+    footer,
+    .sidebar,
+    .btn {
+        display: none !important;
+    }
+}

@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Chrono-Trader{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}?v=1.2">
+{% endblock %}
+
+{% block content %}
+<!-- Ticker Marquee -->
+<div class="ticker-wrap">
+    <div class="ticker">
+        <!-- Ticker items injected by JS -->
+        <div class="ticker__item text-muted">Loading Market Data...</div>
+    </div>
+</div>
+
+<!-- Main Dashboard Grid -->
+<div class="dashboard-grid">
+
+    <!-- LEFT COLUMN: Main Content -->
+    <div class="dashboard-main">
+
+        <!-- Header -->
+        <div class="d-flex justify-content-between align-items-end mb-4 px-2">
+            <div>
+                <h1 class="page-title">AI Dashboard</h1>
+                <p class="page-subtitle">Real-time market analysis & portfolio tracking</p>
+            </div>
+            <div class="text-end">
+                <div class="status-indicator active">
+                    <span class="spinner-grow spinner-grow-sm text-primary" role="status" aria-hidden="true"></span>
+                    <span>System Online</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Portfolio Overview Widget -->
+        <div class="toss-card mb-4">
+            <div class="d-flex justify-content-between align-items-end mb-3">
+                <div>
+                    <h2 class="toss-card-title mb-1">TOTAL EQUITY</h2>
+                    <div class="display-5 fw-bold nums" id="total-equity-footer">₩--</div>
+                </div>
+                <div class="text-end">
+                    <h2 class="toss-card-title mb-1">UNREALIZED PNL</h2>
+                    <div class="fs-3 fw-bold nums" id="total-pnl-footer">--</div>
+                </div>
+            </div>
+            <div class="progress" style="height: 6px;">
+                <div class="progress-bar bg-primary" id="equity-bar" style="width: 100%"></div>
+            </div>
+        </div>
+
+        <!-- Active Positions Widget -->
+        <div class="toss-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 class="toss-card-title mb-0">
+                    ACTIVE POSITIONS
+                    <span class="badge badge-soft bg-primary bg-opacity-10 text-primary ms-2">LIVE</span>
+                </h2>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="togglePositionChartView()"
+                        id="view-toggle-btn" aria-label="차트 뷰와 테이블 뷰 전환" aria-pressed="false">
+                        <i class="bi bi-graph-up me-1" aria-hidden="true"></i> <span id="toggle-btn-text">Chart
+                            View</span>
+                    </button>
+            </div>
+
+            <div id="position-table-view" class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                <table class="table table-hover align-middle mb-0">
+                    <caption class="visually-hidden">현재 활성 포지션 목록</caption>
+                    <thead class="sticky-top">
+                        <tr>
+                            <th class="ps-4">Asset</th>
+                            <th class="text-center">Side</th>
+                            <th class="text-end">Weight</th>
+                            <th class="text-end">Invested</th>
+                            <th class="text-end">Entry</th>
+                            <th class="text-end">Current</th>
+                            <th class="text-end pe-4">PnL</th>
+                        </tr>
+                    </thead>
+                    <tbody id="pnl-table-body" class="fw-medium">
+                        <!-- JS Injected -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="chart-view" class="d-none" style="height: 400px;">
+                <div id="tradingview-chart" class="h-100 w-100"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RIGHT COLUMN: Sidebar Widgets -->
+    <div class="dashboard-sidebar d-flex flex-column gap-3">
+
+        <!-- Next Cycle Timer -->
+        <div class="toss-card">
+            <h5 class="toss-card-title">NEXT ANALYSIS</h5>
+            <div class="d-flex align-items-center justify-content-between">
+                <div class="fs-2 fw-bold nums" id="next-analysis-countdown">--:--</div>
+                <i class="bi bi-stopwatch fs-1 text-primary opacity-25"></i>
+            </div>
+        </div>
+
+        <!-- Market Sentiment -->
+        <div class="toss-card">
+            <h5 class="toss-card-title">MARKET SENTIMENT</h5>
+
+            <div class="d-flex justify-content-between mb-2">
+                <span class="text-secondary">BTC Dominance</span>
+                <span class="fw-bold nums" id="btc-dominance">--%</span>
+            </div>
+
+            <div class="d-flex justify-content-between mb-3">
+                <span class="text-secondary">Market Trend</span>
+                <span class="fw-bold nums" id="avg-change">--%</span>
+            </div>
+
+            <div class="progress mb-2" style="height: 6px;">
+                <div class="progress-bar bg-danger" id="bar-rising" style="width: 50%"></div>
+                <div class="progress-bar bg-primary" id="bar-falling" style="width: 50%"></div>
+            </div>
+            <div class="d-flex justify-content-between small text-muted nums">
+                <span class="text-danger" id="rising-count">-- Rising</span>
+                <span class="text-primary" id="falling-count">-- Falling</span>
+            </div>
+        </div>
+
+        <!-- AI Model Status -->
+        <div class="toss-card">
+            <h5 class="toss-card-title"><i class="bi bi-cpu me-1"></i> AI MODEL</h5>
+
+            <div class="d-flex justify-content-between mb-3">
+                <span class="text-secondary">Gate Mode</span>
+                <span class="fw-bold" id="gate-mode">--</span>
+            </div>
+
+            <div class="progress mb-1" style="height: 8px;">
+                <div class="progress-bar bg-info" id="gate-transformer-bar" style="width: 0%"></div>
+                <div class="progress-bar bg-danger" id="gate-cnn-bar" style="width: 0%"></div>
+            </div>
+            <div class="d-flex justify-content-between small text-muted nums mb-3">
+                <span>Transformer <span id="gate-transformer-pct">--%</span></span>
+                <span>CNN <span id="gate-cnn-pct">--%</span></span>
+            </div>
+
+            <button class="btn btn-primary w-100" onclick="showPredictionsModal()">
+                <i class="bi bi-stars me-2"></i> View AI Insights
+            </button>
+            <div class="d-flex gap-2 mt-2">
+                <button class="btn btn-outline-warning flex-grow-1" onclick="runDashboardOpsAction()">
+                    <i class="bi bi-magic me-2"></i> Run Recommended
+                </button>
+                <button class="btn btn-outline-secondary flex-grow-1" onclick="openControlCenter()">
+                    <i class="bi bi-sliders me-2"></i> Control Center
+                </button>
+            </div>
+            <div class="mt-3 pt-3 border-top border-secondary border-opacity-10">
+                <div id="ops-overview-status" class="small text-muted mb-2">Ops summary syncing...</div>
+                <div id="ops-pipeline-status" class="small text-muted mb-2">Pipeline status syncing...</div>
+                <div id="ops-runtime-status" class="small text-muted mb-2">Runtime status syncing...</div>
+                <div id="ops-output-summary" class="d-flex flex-column gap-2 small">
+                    <div class="text-muted">Latest outputs syncing...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Roadmap -->
+        <div class="toss-card flex-grow-1">
+            <h5 class="toss-card-title">SYSTEM ROADMAP</h5>
+            <div id="roadmap-widget-content" class="d-flex flex-column gap-2"
+                style="max-height: 200px; overflow-y: auto;">
+                <!-- JS Injected -->
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<!-- Native Dialog for Predictions -->
+<dialog id="predictionsDialog" class="p-0 overflow-hidden">
+    <div class="modal-content border-0">
+        <div
+            class="d-flex justify-content-between align-items-center p-3 border-bottom border-secondary border-opacity-10">
+            <h3 class="m-0 fs-5 fw-bold"><i class="bi bi-stars text-warning me-2"></i>Latest AI Predictions</h3>
+            <button onclick="document.getElementById('predictionsDialog').close()" class="btn btn-sm btn-icon"
+                aria-label="다이얼로그 닫기">
+                <i class="bi bi-x-lg" aria-hidden="true"></i>
+            </button>
+        </div>
+        <div class="p-3 bg-surface-elevated">
+            <div id="predictions-meta" class="small text-muted mb-3">
+                <!-- JS Injected -->
+            </div>
+            <div id="modal-predictions-list" class="d-flex flex-column gap-2"
+                style="max-height: 60vh; overflow-y: auto; padding-right: 4px;">
+                <!-- JS Injected -->
+            </div>
+        </div>
+    </div>
+</dialog>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}?v=5.2"></script>
+{% endblock %}

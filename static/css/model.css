@@ -1,0 +1,290 @@
+/* 
+/*
+ * Model Blueprint Theme (Read-Only)
+ * Extends standard control.css with "Deep Dive" aesthetics
+ */
+
+/* QC Fix: Add missing Ensemble Grid Styles */
+.ensemble-grid {
+    display: flex;
+    /* Use flex for better centering of few items */
+    flex-wrap: wrap;
+    /* Allow wrapping */
+    justify-content: center;
+    /* Center the cards */
+    gap: 1rem;
+    margin-top: 10px;
+}
+
+.ensemble-card {
+    background: var(--ct-bg-surface);
+    /* Matches theme */
+    border: 1px solid var(--ct-border-color);
+    border-radius: 12px;
+    padding: 1rem;
+    /* Slightly reduced */
+    text-align: center;
+    transition: transform 0.2s, box-shadow 0.2s;
+    position: relative;
+    overflow: hidden;
+    flex: 1 1 150px;
+    /* Grow/shrink, base 150px */
+    max-width: 220px;
+    /* Don't get too wide */
+    min-width: 140px;
+}
+
+.ensemble-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--ct-shadow-md);
+}
+
+/* Active Leader Highlight */
+.ensemble-card.active-leader {
+    border-color: var(--ct-primary);
+    background: linear-gradient(145deg, rgba(49, 130, 246, 0.08), transparent);
+    box-shadow: 0 4px 15px rgba(49, 130, 246, 0.15);
+}
+
+.ensemble-card.active-leader::after {
+    content: "LEADER";
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    font-size: 0.6rem;
+    font-weight: 800;
+    color: var(--ct-primary);
+    background: rgba(49, 130, 246, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.ensemble-icon {
+    font-size: 1.8rem;
+    color: var(--ct-text-secondary);
+    margin-bottom: 0.8rem;
+}
+
+.ensemble-card.active-leader .ensemble-icon {
+    color: var(--ct-primary);
+    animation: pulse-icon 2s infinite;
+}
+
+@keyframes pulse-icon {
+    0% {
+        opacity: 0.8;
+        transform: scale(1);
+    }
+
+    50% {
+        opacity: 1;
+        transform: scale(1.1);
+    }
+
+    100% {
+        opacity: 0.8;
+        transform: scale(1);
+    }
+}
+
+.ensemble-name {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--ct-text-primary);
+    margin-bottom: 0.2rem;
+}
+
+.ensemble-metric {
+    font-size: 1.4rem;
+    font-weight: 800;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--ct-text-primary);
+    line-height: 1.2;
+}
+
+.ensemble-label {
+    font-size: 0.75rem;
+    color: var(--ct-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Blueprint Container - Digital Glass Look */
+.blueprint-container {
+    background: #0f172a;
+    /* Deep blue/black base */
+    border: 1px solid #334155;
+    border-radius: 16px;
+    padding: 24px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.5);
+    min-height: 480px;
+    /* Reduced specific min-height removed, controlled by inner viz */
+}
+
+/* Force header text to white inside blueprint */
+.blueprint-container h5 {
+    color: #ffffff !important;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* Grid Overlay Effect */
+.blueprint-grid-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image:
+        linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.blueprint-content {
+    position: relative;
+    z-index: 1;
+}
+
+/* Architecture Visualizer */
+.arch-visualizer {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 12px;
+    padding: 10px;
+    /* Reduced padding */
+    margin-bottom: 12px;
+    border: 1px dashed rgba(255, 255, 255, 0.1);
+    min-height: 350px;
+    /* Reduced from 480px */
+    height: 400px;
+    /* Fixed height for consistent pan/zoom viewport */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    /* Hide overflow for pan/zoom */
+    cursor: grab;
+    /* Indicate draggable */
+}
+
+.arch-visualizer:active {
+    cursor: grabbing;
+}
+
+/* Caption / Disclaimer */
+.blueprint-caption {
+    font-size: 1rem;
+    color: rgba(255, 255, 255, 0.6);
+    /* Fixed light text for dark container */
+    text-align: center;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Spec Cards (Rich Layout) */
+.spec-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1.5rem;
+}
+
+.spec-card {
+    background: var(--ct-bg-surface);
+    border: 1px solid var(--ct-border-color);
+    border-radius: var(--ct-radius-md);
+    padding: 2rem;
+    /* Increased padding */
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+/* Add subtle top accent border */
+.spec-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--ct-primary), transparent);
+    opacity: 0.7;
+}
+
+.spec-card:hover {
+    transform: translateY(-5px) scale(1.01);
+    box-shadow: var(--ct-shadow-lg);
+    border-color: var(--ct-primary-subtle);
+    z-index: 10;
+}
+
+/* Icons with background circle */
+.spec-title {
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ct-text-secondary);
+    margin-bottom: 1.2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+}
+
+.spec-title i {
+    color: var(--ct-primary);
+    background: rgba(49, 130, 246, 0.1);
+    /* Subtle primary tint */
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    font-size: 1.1rem;
+}
+
+.spec-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.8rem;
+    /* Larger value */
+    font-weight: 800;
+    color: var(--ct-text-primary);
+    margin-bottom: 1rem;
+    letter-spacing: -0.03em;
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+}
+
+.spec-desc {
+    font-size: 0.95rem;
+    color: var(--ct-text-secondary);
+    line-height: 1.6;
+    border-top: 1px solid var(--ct-border-color);
+    /* Separator */
+    padding-top: 1rem;
+}
+
+/* Live JSON Spec Container */
+.json-container {
+    height: 100%;
+    min-height: 400px;
+}
+
+/* Section Titles with more weight */
+.section-title {
+    font-size: 1.1rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    color: var(--ct-text-secondary);
+    text-transform: uppercase;
+    margin-bottom: 1.5rem;
+    padding-left: 0.5rem;
+    border-left: 4px solid var(--ct-primary);
+}

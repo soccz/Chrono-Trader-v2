@@ -1,14 +1,14 @@
 {
-    "lr_g": 0.0009078260164140392,
-    "lr_c": 2.54096176739361e-05,
+    "lr_g": 0.0005971783139342485,
+    "lr_c": 0.0005181008400500892,
     "d_model": 128,
-    "n_layers": 3,
-    "n_heads": 4,
+    "n_layers": 4,
+    "n_heads": 8,
     "batch_size": 32,
-    "lambda_recon_initial": 24.104286716024102,
-    "lambda_gp_initial": 8.92689943772539,
-    "lambda_ece": 0.4349571173488294,
-    "critic_base_iters": 9,
-    "dropout_p": 0.08400632402025376,
-    "lambda_direction": 0.20276316989372606
+    "lambda_recon_initial": 2.917088390739919,
+    "lambda_gp_initial": 5.955389271172664,
+    "lambda_ece": 0.4035211337692972,
+    "critic_base_iters": 7,
+    "dropout_p": 0.17260833688322438,
+    "lambda_direction": 0.9952015123575392
 }

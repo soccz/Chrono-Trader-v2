@@ -1,0 +1,300 @@
+{% extends "base.html" %}
+
+{% block title %}로드맵 - Chrono-Trader{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/control.css') }}?v=1.5">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tasks.css') }}?v=1.2">
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-end mb-4 px-2 flex-wrap gap-3">
+        <div>
+            <h1 class="page-title">프로젝트 로드맵</h1>
+            <p class="text-muted small mb-0">Project Roadmap · Chrono-Trader v2.1 Development</p>
+        </div>
+        <div class="d-flex gap-2">
+            <span class="badge bg-success bg-opacity-10 text-success py-2 px-3">
+                <i class="bi bi-check-circle me-1"></i>Phase 8/8 완료
+            </span>
+        </div>
+    </div>
+
+    <!-- Progress Stats -->
+    <div class="progress-grid mb-4">
+        <div class="progress-stat">
+            <div class="progress-stat-value text-success">12</div>
+            <div class="progress-stat-label">완료됨</div>
+        </div>
+        <div class="progress-stat">
+            <div class="progress-stat-value text-primary">2</div>
+            <div class="progress-stat-label">진행 중</div>
+        </div>
+        <div class="progress-stat">
+            <div class="progress-stat-value text-muted">5</div>
+            <div class="progress-stat-label">대기</div>
+        </div>
+        <div class="progress-stat">
+            <div class="progress-stat-value" style="color: var(--ct-primary);">63%</div>
+            <div class="progress-stat-label">전체 진행률</div>
+        </div>
+    </div>
+
+    <!-- Kanban Board -->
+    <div class="kanban-board">
+
+        <!-- TODO Column -->
+        <div class="kanban-column column-todo">
+            <div class="kanban-header">
+                <h6><i class="bi bi-inbox text-secondary"></i> 대기 (TODO)</h6>
+                <span class="kanban-count">5</span>
+            </div>
+            <div class="kanban-body">
+                <div class="task-card priority-high" tabindex="0" role="listitem"
+                    aria-label="할 일: Alpha/Beta 실제 연동, 우선순위 높음">
+                    <div class="task-title">Alpha/Beta 실제 연동</div>
+                    <div class="task-desc">BTC 시장 데이터와 비교하여 실제 Alpha/Beta 계산</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-backend">Backend</span>
+                            <span class="task-tag tag-data">Data</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+
+                <div class="task-card priority-high" tabindex="0" role="listitem" aria-label="할 일: 거래 데이터 확보, 우선순위 높음">
+                    <div class="task-title">거래 데이터 확보</div>
+                    <div class="task-desc">최소 100건 이상의 백테스트용 히스토리 데이터</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-data">Data</span>
+                        </div>
+                        <div class="task-assignee">👤</div>
+                    </div>
+                </div>
+
+                <div class="task-card priority-medium" tabindex="0" role="listitem"
+                    aria-label="할 일: Walk-Forward 검증, 우선순위 중간">
+                    <div class="task-title">Walk-Forward 검증</div>
+                    <div class="task-desc">학습/테스트 기간 분리 증명 구현</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-ai">AI Model</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+
+                <div class="task-card priority-medium" tabindex="0" role="listitem"
+                    aria-label="할 일: 실시간 알림 기능, 우선순위 중간">
+                    <div class="task-title">실시간 알림 기능</div>
+                    <div class="task-desc">신호 발생 시 Telegram/Discord 알림</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-infra">Infra</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+
+                <div class="task-card priority-low" tabindex="0" role="listitem"
+                    aria-label="할 일: PDF 리포트 자동 생성, 우선순위 낮음">
+                    <div class="task-title">PDF 리포트 자동 생성</div>
+                    <div class="task-desc">백테스트 결과를 PDF로 내보내기</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-frontend">Frontend</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- IN PROGRESS Column -->
+        <div class="kanban-column column-progress">
+            <div class="kanban-header">
+                <h6><i class="bi bi-arrow-repeat text-primary"></i> 진행 중</h6>
+                <span class="kanban-count">2</span>
+            </div>
+            <div class="kanban-body">
+                <div class="task-card priority-high" tabindex="0" role="listitem"
+                    aria-label="진행 중: 포트폴리오 증명 데이터, 우선순위 높음">
+                    <div class="task-title">포트폴리오 증명 데이터</div>
+                    <div class="task-desc">Sharpe, Sortino, Calmar 등 전문 지표 추가됨</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-backend">Backend</span>
+                            <span class="task-tag tag-frontend">Frontend</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+
+                <div class="task-card priority-medium" tabindex="0" role="listitem"
+                    aria-label="진행 중: Research Lab 고도화, 우선순위 중간">
+                    <div class="task-title">Research Lab 고도화</div>
+                    <div class="task-desc">Deep Analysis 도구 개발</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-ai">AI Model</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- DONE Column -->
+        <div class="kanban-column column-done">
+            <div class="kanban-header">
+                <h6><i class="bi bi-check-circle text-success"></i> 완료</h6>
+                <span class="kanban-count">12</span>
+            </div>
+            <div class="kanban-body">
+                <div class="task-card" tabindex="0" role="listitem" aria-label="완료: 백테스트 프리미엄 리디자인">
+                    <div class="task-title">백테스트 프리미엄 리디자인</div>
+                    <div class="task-desc">주간 뷰, 기간 탭, 전문 지표 포함</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-frontend">Frontend</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+
+                <div class="task-card" tabindex="0" role="listitem" aria-label="완료: XAI 갤러리 구현">
+                    <div class="task-title">XAI 갤러리 구현</div>
+                    <div class="task-desc">Digital Thesis 스타일 문서 페이지</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-frontend">Frontend</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+
+                <div class="task-card" tabindex="0" role="listitem" aria-label="완료: 모델 블루프린트">
+                    <div class="task-title">모델 블루프린트</div>
+                    <div class="task-desc">Read-Only 모델 아키텍처 시각화</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-ai">AI Model</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+
+                <div class="task-card" tabindex="0" role="listitem" aria-label="완료: 라이트/다크 모드 호환">
+                    <div class="task-title">라이트/다크 모드 호환</div>
+                    <div class="task-desc">CSS 변수 기반 적응형 테마</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-frontend">Frontend</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+
+                <div class="task-card" tabindex="0" role="listitem" aria-label="완료: 대시보드 리팩토링">
+                    <div class="task-title">대시보드 리팩토링</div>
+                    <div class="task-desc">Chart.js 통합 & PnL 테이블</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-frontend">Frontend</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+
+                <div class="task-card" tabindex="0" role="listitem" aria-label="완료: 성과 분석 페이지">
+                    <div class="task-title">성과 분석 페이지</div>
+                    <div class="task-desc">Equity Curve, Trade Ledger 구현</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-backend">Backend</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+
+                <div class="task-card" tabindex="0" role="listitem" aria-label="완료: 컨트롤 패널 콕핏">
+                    <div class="task-title">컨트롤 패널 콕핏</div>
+                    <div class="task-desc">시스템 모니터링 인터페이스</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-infra">Infra</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+
+                <div class="task-card" tabindex="0" role="listitem" aria-label="완료: 앙상블 모델 가중치 표시">
+                    <div class="task-title">앙상블 모델 가중치 표시</div>
+                    <div class="task-desc">5개 모델 역할 및 수정일 표시</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-ai">AI Model</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+
+                <div class="task-card" tabindex="0" role="listitem" aria-label="완료: 게이트 메커니즘 시각화">
+                    <div class="task-title">게이트 메커니즘 시각화</div>
+                    <div class="task-desc">Trend/Pattern 모드 전환 게이지</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-frontend">Frontend</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+
+                <div class="task-card" tabindex="0" role="listitem" aria-label="완료: Mermaid 아키텍처 다이어그램">
+                    <div class="task-title">Mermaid 아키텍처 다이어그램</div>
+                    <div class="task-desc">Pan/Zoom 가능한 인터랙티브 뷰</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-frontend">Frontend</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+
+                <div class="task-card" tabindex="0" role="listitem" aria-label="완료: 디자인 통일">
+                    <div class="task-title">디자인 통일</div>
+                    <div class="task-desc">Deep Space Glass 테마 전체 적용</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-frontend">Frontend</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+
+                <div class="task-card" tabindex="0" role="listitem" aria-label="완료: 기본 다크 모드 설정">
+                    <div class="task-title">기본 다크 모드 설정</div>
+                    <div class="task-desc">첫 방문자도 다크 모드로 시작</div>
+                    <div class="task-meta">
+                        <div class="task-tags">
+                            <span class="task-tag tag-frontend">Frontend</span>
+                        </div>
+                        <div class="task-assignee">AI</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/tasks.js"></script>
+{% endblock %}

@@ -2,6 +2,11 @@
 
 > 이 문서는 프로젝트의 **학습-추론-평가-재보정** 사이클을 정의합니다.
 > 모든 AI 어시스턴트는 이 문서를 숙지하고, 아래 규칙을 위반하는 코드를 작성해서는 안 됩니다.
+>
+> 범위:
+> - 이 문서는 repo root의 실제 코인 예측 시스템 기준이다.
+> - `aaa/`는 논문 및 연구 서술 트랙으로 별도 취급한다.
+> - 운영 계약은 `OPS_ACCEPTANCE.md`, 전체 개요는 `README.md`, 모델 설명은 `PROJECT_ARCHITECTURE.md`를 우선 참조한다.
 
 ---
 
@@ -66,8 +71,11 @@ CREATE TABLE trades (
 
 ```
 market, signal, strategy, expected_return, confidence, position_size,
-volatility, dtw_distance, current_price, pattern, reason
+volatility, current_price, pattern, status, net_alpha, pi_low_80,
+pi_high_80, attention_top3, prototype_match
 ```
+
+정확한 출력 계약은 `OPS_ACCEPTANCE.md`와 `utils/output_contract.py` 기준으로 맞춘다.
 
 ---
 
@@ -122,12 +130,14 @@ main.py --mode daily
 
 ## 4.5 모델 내부 구조 (요약)
 
-### GAN Hybrid Ensemble (5 모델)
-- **입력**: 168시간 × 19피처 (MinMaxScaler)
-- **경로**: Transformer(168h 어텐션) + CNN(1D/2D) → GatedFusion → GAN Decoder
-- **학습 Loss 5종**: WGAN-GP, Reconstruction(MSE), ECE, Direction Balance, Gate Reg
-- **동적 조정**: λ_recon, λ_gp 에폭마다 자동 조정
-- **Auto-Stop**: grad_norm/ratio 이상 200 steps 지속 시 중단
+### Hybrid Probabilistic Forecaster
+- **입력**: 168시간 시퀀스 × `config.Data.FEATURE_COLUMNS`
+- **컨텍스트**: `market_index_return`, `historical_similarity`, BTC regime, factor interactions
+- **인코더**: Transformer attention + attention-guided TCN
+- **통합**: explainable gated fusion + FiLM regime conditioning
+- **디코더**: GAN 또는 CVAE 계열 확률 디코더
+- **출력**: 3-step future return path distribution
+- **학습 Loss**: WGAN-GP 또는 CVAE 경로 + reconstruction + calibration + direction + gate regularization
 
 ### XGBoost Pump Classifier
 - **입력**: 17 피처 (alpha/beta 미포함, volume_spike_score/squeeze_on/roc 포함)
@@ -135,10 +145,14 @@ main.py --mode daily
 - **임계값**: total_pump_prob > 0.2
 
 ### 추론 파이프라인
-- **MC-Dropout**: 5모델 × 20회 = 100 predictions
+- **앙상블 + 샘플링**: 로드된 `model_*.pth` 집합에 대해 모델별 샘플을 모아 분포 추정
 - **Shrunk Beta**: 코인별 β를 cross-sectional mean 방향으로 수축
 - **가중 투표**: ModelPerformanceTracker의 rolling accuracy 비례
-- **추천 퍼널 6단계**: Tradeable → 방향 일관 → 체제/Lead-Lag → 유동성 → 수익률 → 불확실성 → DTW
+- **전략 해석**:
+  - 추세형: 큰 흐름을 따라가는 추천
+  - 패턴형: 최근 강한 종목의 follower/pattern 기회를 탐색
+  - 운영 모드: intraday / morning-report
+- **추천 퍼널**: Tradeable → 방향 일관 → 체제/Lead-Lag → 유동성 → 수익률 → 불확실성 → DTW
 
 > 전체 수치/상수는 [PROJECT_ARCHITECTURE.md](./PROJECT_ARCHITECTURE.md) 참조
 

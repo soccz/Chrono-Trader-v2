@@ -1,0 +1,64 @@
+{
+    "name": "Auto Prediction Pipeline",
+    "nodes": [
+        {
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "field": "hours",
+                            "hours": 4
+                        }
+                    ]
+                }
+            },
+            "name": "Cron (Every 4h)",
+            "type": "n8n-nodes-base.cron",
+            "typeVersion": 1,
+            "position": [
+                250,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "command": "cd /home/soccz/.gemini/antigravity/scratch/mnt_20t/main/gan_t && /usr/bin/python3 run_prediction.py"
+            },
+            "name": "Run Prediction Script",
+            "type": "n8n-nodes-base.executeCommand",
+            "typeVersion": 1,
+            "position": [
+                450,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "url": "http://localhost:5001/api/trigger/prediction",
+                "method": "POST",
+                "options": {}
+            },
+            "name": "Trigger API (Backup)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 1,
+            "position": [
+                650,
+                300
+            ],
+            "notes": "Optional: Trigger via API if CLI fails"
+        }
+    ],
+    "connections": {
+        "Cron (Every 4h)": {
+            "main": [
+                [
+                    {
+                        "node": "Run Prediction Script",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    }
+}

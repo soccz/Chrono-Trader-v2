@@ -87,6 +87,17 @@ def _run(cmd: list, env: Optional[Dict[str, str]] = None) -> int:
     return int(p.returncode)
 
 
+def _env_delta(env: Optional[Dict[str, str]]) -> Dict[str, str]:
+    if not env:
+        return {}
+    base = dict(os.environ)
+    delta = {}
+    for key, value in env.items():
+        if base.get(key) != value and (key.startswith("AETHER_") or key in {"PYTHONUNBUFFERED", "PYTHONPATH"}):
+            delta[key] = value
+    return delta
+
+
 def main():
     ap = argparse.ArgumentParser(description="Scheduled ops runner: refresh-db then intraday/morning-report.")
     ap.add_argument("--job", choices=["intraday", "morning-report"], required=True)
@@ -112,6 +123,7 @@ def main():
     ap.add_argument("--skip_aux", action="store_true", help="Pass --skip_aux to morning-report inference.")
     ap.add_argument("--skip_pattern_followers", action="store_true", help="Pass --skip_pattern_followers to morning-report inference.")
     ap.add_argument("--skip_pump_radar", action="store_true", help="Pass --skip_pump_radar to morning-report inference.")
+    ap.add_argument("--dry_run", action="store_true", help="Print the assembled refresh/inference commands and exit without running them.")
     args = ap.parse_args()
 
     with run_lock(f"aether_{args.job}", timeout_sec=float(args.lock_timeout_sec or 0.0), exit_code=0):
@@ -162,8 +174,8 @@ def main():
 
         ts = datetime.now(timezone.utc).isoformat()
         print(f"[{ts}] Running refresh-db: {' '.join(refresh_cmd)}", flush=True)
-        rc_refresh = _run(refresh_cmd, env=_env_with_tuning(args.job, tuning, watch_only=False))
-        refresh_failed = rc_refresh != 0
+        refresh_env = _env_with_tuning(args.job, tuning, watch_only=False)
+        refresh_failed = False
 
         # 2) inference
         infer_cmd = [
@@ -192,9 +204,34 @@ def main():
 
         ts = datetime.now(timezone.utc).isoformat()
         print(f"[{ts}] Running inference: {' '.join(infer_cmd)}", flush=True)
+        if args.dry_run:
+            rerun_cmd = infer_cmd + ["--allow_stale_data"] if "--allow_stale_data" not in infer_cmd else list(infer_cmd)
+            payload = {
+                "job": args.job,
+                "python": args.python,
+                "refresh_cmd": refresh_cmd,
+                "refresh_env": _env_delta(refresh_env),
+                "infer_cmd": infer_cmd,
+                "infer_env": _env_delta(_env_with_tuning(args.job, tuning, watch_only=False)),
+                "stale_rerun_cmd": rerun_cmd,
+                "stale_rerun_env": _env_delta(_env_with_tuning(args.job, tuning, watch_only=True)),
+                "tuning_path": tuning_path,
+                "market_budget": market_budget,
+                "rotation_keep": rotation_keep,
+                "refresh_top_n": refresh_top_n,
+            }
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            raise SystemExit(0)
+
+        rc_refresh = _run(refresh_cmd, env=refresh_env)
+        refresh_failed = rc_refresh != 0
+        if refresh_failed and args.allow_stale_on_refresh_fail and "--allow_stale_data" not in infer_cmd:
+            infer_cmd.append("--allow_stale_data")
+
         # Do NOT force watch-only just because refresh-db failed; the DB may still be fresh enough.
         # We rely on the main.py freshness gate. Only if it aborts (exit=2) do we rerun in watch-only mode.
-        rc_infer = _run(infer_cmd, env=_env_with_tuning(args.job, tuning, watch_only=False))
+        infer_env = _env_with_tuning(args.job, tuning, watch_only=False)
+        rc_infer = _run(infer_cmd, env=infer_env)
 
         # If inference aborted on stale data, rerun once in watch-only allow-stale mode (explicit).
         if rc_infer == 2 and not ("--allow_stale_data" in infer_cmd):

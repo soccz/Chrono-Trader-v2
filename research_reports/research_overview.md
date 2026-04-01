@@ -1,10 +1,14 @@
 ## Chrono-Trader Research Overview
 
+This file is a research reference note, not the runtime source of truth.
+For the live system, prefer `OPS_ACCEPTANCE.md`, `README.md`, and `PROJECT_ARCHITECTURE.md`.
+`aaa/` remains the dedicated paper/research-writing track when a publication-oriented narrative is needed.
+
 ### 1. Motivation
 
 Crypto spot markets suffer from regime shifts, low-liquidity pockets, and pump-and-dump events. Chrono-Trader approaches this by:
 
-- Generating **6-hour return trajectories** via a Transformer-conditioned GAN instead of one-step predictions.
+- Generating **short-horizon return trajectories** via an attention-conditioned probabilistic decoder instead of one-step predictions.
 - Detecting **micro pump events** with gradient-boosted classification.
 - Applying a recommender that filters by liquidity, uncertainty (MC Dropout), and DTW pattern similarity to output long/short ideas.
 
@@ -13,22 +17,22 @@ Crypto spot markets suffer from regime shifts, low-liquidity pockets, and pump-a
 | Stage | Core idea | Main files |
 |-------|-----------|------------|
 | Data ingestion | Upbit hourly OHLCV, dynamic index, technical indicators, pump features | `data/collector.py`, `data/preprocessor.py` |
-| Sequence generator | Transformer encoder + multi-scale CNN + GAN decoder → 6-step returns | `models/hybrid_model.py`, `models/transformer_encoder.py`, `models/gan_decoder.py` |
+| Sequence generator | Transformer encoder + attention-guided TCN/CNN + probabilistic decoder → short-horizon return path | `models/hybrid_model.py`, `models/transformer_encoder.py`, `models/gan_decoder.py`, `models/cvae_decoder.py` |
 | Pump classifier | XGBoost multi-class pump probability | `training/pump_trainer.py`, `inference/pump_predictor.py` |
 | Recommender | Liquidity → uncertainty → DTW filters → compounded-return threshold | `inference/recommender.py` |
 | Evaluation | Backtest pipeline + calibration diagnostics | `training/evaluator.py`, `analysis/validate_uncertainty.py` |
 
 ### 3. Training Strategy
 
-1. **Transformer-GAN**
-   - Input: 168×15 feature tensor (technical, market index, α/β).
-   - Generator loss: `L = L_adv + λ_recon L_MSE + λ_ece L_calib` (λ adjusted adaptively).
-   - Critic: spectral-norm MLP, gradient penalty.
-   - Bagging + adaptive critic iterations.
+1. **Hybrid probabilistic forecaster**
+   - Input: 168×runtime feature tensor with macro context, α/β, factors, and regime features.
+   - Encoder: attention for global flow + attention-guided TCN/CNN for local shape.
+   - Decoder: GAN/CVAE family for path distribution generation.
+   - Training emphasis: reconstruction, calibration, uncertainty usefulness, and stable sampling.
 
 2. **Pump detection**: XGBoost with class-balanced weighting, multi-class labels from forward high.
 
-3. **MC Dropout**: 30–50 forward passes, uncertainty used for filtering and ECE reporting.
+3. **Sampling / MC inference**: repeated forward passes or decoder sampling, uncertainty used for filtering and ECE reporting.
 
 4. **DTW Pattern Filter**: soft-DTW vs cached “success patterns” to prune implausible signals.
 
@@ -42,7 +46,7 @@ Crypto spot markets suffer from regime shifts, low-liquidity pockets, and pump-a
 
 ### 5. Research Roadmap
 
-#### 5.1 Stabilize Transformer-GAN (Priority)
+#### 5.1 Stabilize Hybrid Probabilistic Forecaster (Priority)
 - Two-time-scale updates (lr critic = 2× generator), adaptive critic iterations.
 - Replace heuristic λ with GradNorm/AdaLoss to target `|L_adv| : L_recon ≈ 0.5–1.0`.
 - Spectral norm + light DiffAug to curb mode collapse.
@@ -92,14 +96,14 @@ Crypto spot markets suffer from regime shifts, low-liquidity pockets, and pump-a
 - Training: `W_est`, `||∇D||`, `lossC`, `lossG_adv`, `lossG_recon`, `lossG_ece`, `λ_gp`, `λ_recon`, collapse score.
 - Calibration: ECE, Brier score, Spearman(|error|, σ), low/high-uncertainty t-tests.
 - Recommender: Precision@K, Profit@K, liquidity filter hit rate, DTW τ stats.
-- Backtest: win rate, Sharpe, drawdown, hit_rate@6h, profit factor.
+- Backtest: win rate, Sharpe, drawdown, hit rate at target horizon, profit factor.
 - Ensemble: pairwise correlation, disagreement rate, oracle upper bound difference.
 
 ### 8. Path to Publication
-1. **Stabilize GAN** so generated trajectories are realistic (ratio near target, gradient norms within band).
+1. **Stabilize the probabilistic decoder** so generated trajectories are realistic and uncertainty is useful.
 2. **Calibrated uncertainty** achieving ECE < 0.05 and Spearman ≥ 0.3, leading to improved filtered returns.
 3. **Backtest lift** over baselines (positive profit or drawdown reduction) under realistic execution.
 4. **Ablation studies** for each component (sequence vs scalar, uncertainty loss, pump filter, DTW patterns).
 5. **Execution realism** documented (slippage, liquidity, latency handling).
 
-Achieving these milestones will position Chrono-Trader as a credible research contribution on multi-horizon GAN forecasting with calibrated uncertainty for cryptocurrency trading.
+Achieving these milestones will position Chrono-Trader as a credible research contribution on probabilistic crypto forecasting with calibrated uncertainty.

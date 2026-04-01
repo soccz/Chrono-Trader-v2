@@ -133,7 +133,8 @@ def run():
     print("=" * 50)
     
     # 1. 트래커 초기화 (기존 데이터 유지, reset 하지 않음!)
-    tracker = get_tracker(n_models=5)
+    from utils.config import config
+    tracker = get_tracker(n_models=config.Gan.N_ENSEMBLE_MODELS)
     
     # 2. 실제 추천 기록 평가
     model_results = evaluate_recommendations(lookback_days=7)
@@ -151,16 +152,15 @@ def run():
     stats = tracker.get_stats()
     
     model_names = [
-        "Trend Following (추세 추종)",
-        "Mean Reversion (평균 회귀)",
-        "Volatility Breakout (변동성)",
-        "Pattern Recognition (패턴)",
-        "Market Neutral (시장 중립)"
+        "Scalper (단기 모멘텀)",
+        "Swing Trader (패턴 전이)",
+        "Trend Follower (추세 추종)",
+        "Regime Sentinel (변동성/꼬리 리스크)"
     ]
-    
+
     print("\n📊 모델별 실제 성과:")
     print("-" * 60)
-    for i in range(5):
+    for i in range(config.Gan.N_ENSEMBLE_MODELS):
         model_stat = stats.get(f'model_{i}', {})
         n_samples = model_stat.get('n_samples', 0)
         accuracy = model_stat.get('accuracy', 0.0)

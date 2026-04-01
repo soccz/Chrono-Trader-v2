@@ -8,5 +8,5 @@ Type=oneshot
 WorkingDirectory=/mnt/20t/main/gan_t
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=/mnt/20t/main/gan_t
-ExecStart=/usr/bin/python3 /mnt/20t/main/gan_t/scripts/run_scheduled.py --job morning-report --python /usr/bin/python3 --lock_timeout_sec 0 --limit 8 --lookback_days 1 --min_k 1 --market_budget 40 --refresh_top_n 24 --refresh_days 7 --timeout_sec_refresh 2400 --timeout_sec_infer 0 --skip_pattern_followers
+ExecStart=/usr/bin/python3 /mnt/20t/main/gan_t/scripts/run_ops_job.py --job morning-report --lock_timeout_sec 0 --limit 8 --lookback_days 1 --min_k 1 --market_budget 60 --refresh_top_n 40 --refresh_days 7 --timeout_sec_refresh 2400 --timeout_sec_infer 0 --skip_pattern_followers
 TimeoutStartSec=5400

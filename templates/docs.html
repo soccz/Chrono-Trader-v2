@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+
+{% block title %}Technical Documentation - Chrono-Trader{% endblock %}
+
+{% block extra_head %}
+<!-- Design Tokens & CSS -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/design-tokens.css') }}?v=1.1">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/control.css') }}?v=1.5">
+<!-- Thesis/Documentation specific styles - extracted for caching -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/docs.css') }}?v=1.4">
+<!-- MathJax for LaTeX Equations -->
+<!-- MathJax 3 (includes its own polyfills, no external polyfill.io needed) -->
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="row mb-5">
+    <div class="col-12 control-header">
+        <div>
+            <h1 class="page-title">Documentation & XAI Gallery</h1>
+            <div class="page-subtitle">Chrono-Trader v2.1 아키텍처 백서 및 분석 갤러리</div>
+        </div>
+        <div class="status-indicator active">
+            <span class="font-monospace">DOC_ID: XT-2026-v2</span>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Left: Sticky TOC -->
+    <div class="col-lg-3 d-none d-lg-block">
+        <div class="sticky-toc">
+            <div class="toss-card p-0 overflow-hidden">
+                <div class="p-3 border-bottom border-secondary border-opacity-10">
+                    <h6 class="text-white text-uppercase small fw-bold m-0 spacing-1">목차 (Contents)</h6>
+                </div>
+                <nav class="py-2" id="toc-nav">
+                    <a class="toc-link active" href="#sec-overview">1. 요약 (Executive Summary)</a>
+                    <a class="toc-link" href="#sec-methodology">2. 방법론 (Methodology)</a>
+                    <a class="toc-link" href="#sec-math">3. 수학적 배경 (Math)</a>
+                    <a class="toc-link" href="#sec-xai">4. XAI 분석 갤러리</a>
+                </nav>
+            </div>
+
+            <div class="mt-4">
+                <div class="citation-card shadow-sm">
+                    <div class="fw-bold mb-2 text-white"><i class="bi bi-quote me-2 text-primary"></i>핵심 철학</div>
+                    <span class="fst-italic">"시장은 두 가지 상태로 존재한다:<br>장기적 '추세'와 일시적 '충격'이다."</span><br>
+                    <span class="d-block mt-2 text-end opacity-75">- Dual-Regime Hypothesis</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right: Thesis Content -->
+    <div class="col-lg-9 thesis-container">
+
+        <!-- 1. Overview -->
+        <section id="sec-overview" class="thesis-section">
+            <h2 class="thesis-header">1. 요약: 이중 체제 가설 (Dual-Regime)</h2>
+            <p>
+                금융 시장은 거시적인 경제 흐름에 따른 <strong>장기 추세(Secular Trends)</strong>와,
+                뉴스나 수급 불균형으로 인한 <strong>일시적 충격(Transient Shocks)</strong>이 혼재되어 있습니다.
+                기존의 LSTM 단일 모델은 이 두 가지 신호를 구분하지 못하고 뭉뚱그려 학습하는 경향이 있어,
+                급격한 변동성 장세에서 대응력이 떨어집니다.
+            </p>
+            <p>
+                Chrono-Trader v2는 이를 해결하기 위해 <strong>하이브리드 게이트 아키텍처(Hybrid Gated Architecture)</strong>를 도입했습니다.
+                단일 인코더 대신, <strong>Transformer(전역 문맥)</strong>와 <strong>1D CNN(국소 패턴)</strong>이라는 두 개의 뇌를 병렬로 가동하여
+                시장의 현재 상태를 입체적으로 분석합니다.
+            </p>
+        </section>
+
+        <!-- 2. Methodology -->
+        <section id="sec-methodology" class="thesis-section">
+            <h2 class="thesis-header">2. 방법론: 아키텍처 토폴로지</h2>
+            <div class="toss-card border-0 bg-dark bg-opacity-50 p-4 mb-4">
+                <div class="row align-items-center">
+                    <div class="col-md-5 text-center">
+                        <i class="bi bi-diagram-3 text-primary display-4 mb-3 d-block"></i>
+                        <span class="fw-bold text-white fs-5">Hybrid-GAN Fusion</span>
+                    </div>
+                    <div class="col-md-7 border-start border-secondary border-opacity-25 ps-4">
+                        <ul class="list-unstyled mb-0 gap-4 d-flex flex-column">
+                            <li>
+                                <strong class="text-white d-block mb-1 fs-6"><i
+                                        class="bi bi-bezier2 me-2 text-warning"></i>경로 A: Transformer (추세)</strong>
+                                <span class="small text-secondary">Multi-head Self Attention을 사용하여 168시간(1주일) 동안의 거시적인
+                                    가격 흐름과 상관관계를 파악합니다.</span>
+                            </li>
+                            <li>
+                                <strong class="text-white d-block mb-1 fs-6"><i
+                                        class="bi bi-activity me-2 text-info"></i>경로 B: Dilated TCN (패턴)</strong>
+                                <span class="small text-secondary">확장된 인과 콘볼루션(Dilated Causal Conv)을 통해 급등락, 캔들 패턴, 거래량
+                                    스파이크 등 국소적인 특징을 포착합니다.</span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. Math -->
+        <section id="sec-math" class="thesis-section">
+            <h2 class="thesis-header">3. 수학적 배경</h2>
+            <p>
+                두 경로의 정보는 학습 가능한 <strong>게이트 유닛(Gate Unit) \( \alpha \)</strong>에 의해 융합됩니다.
+                최종 잠재 벡터 \( z_{fused} \)는 다음과 같이 계산됩니다:
+            </p>
+
+            <div class="equation-box">
+                \[ z_{fused} = \sigma(\alpha \cdot z_{trans} + (1-\alpha) \cdot z_{cnn}) \]
+            </div>
+
+            <p>
+                여기서 \( \alpha \)가 1에 가까우면 Transformer(추세)를, 0에 가까우면 CNN(패턴)을 더 신뢰합니다.
+                생성자 \( G \)는 이 벡터를 바탕으로 미래 가격 시퀀스 \( \hat{y} \)를 생성하며,
+                판별자 \( D \)와의 적대적 학습(Adversarial Training)을 통해 정교해집니다:
+            </p>
+
+            <div class="equation-box">
+                \[ \min_G \max_D V(D, G) = \mathbb{E}_{x \sim p_{data}(x)}[\log D(x)] + \mathbb{E}_{z \sim
+                p_{z}(z)}[\log(1 - D(G(z)))] \]
+            </div>
+        </section>
+
+        <!-- 4. XAI Gallery -->
+        <section id="sec-xai" class="thesis-section">
+            <h2 class="thesis-header">4. XAI 분석 갤러리 (Explainable AI)</h2>
+            <p>
+                모델이 <strong>"왜"</strong> 그런 판단을 내렸는지 시각화한 결과물입니다.
+                이 차트들은 검증(Validation) 단계에서 실제 데이터를 바탕으로 자동 생성됩니다.
+            </p>
+
+            <div class="xai-gallery-grid">
+
+                <!-- Figure 1: Gate Distribution -->
+                <div class="xai-figure">
+                    <div class="xai-img-wrapper">
+                        <!-- serve_analysis 엔드포인트를 통해 이미지 로드 -->
+                        <img src="{{ url_for('serve_analysis', filename='gate_distribution.png') }}"
+                            alt="학습 기간 동안의 Gate Value 분포 그래프. 0과 1 양극단에 데이터가 집중되어 모드 스위칭이 확실함을 보여줍니다."
+                            onerror="this.src='https://placehold.co/600x400/1e1e1e/FFF?text=Analysis+Waiting...'">
+                    </div>
+                    <div class="xai-caption">
+                        <div class="xai-title">
+                            <span>Figure 1. 게이트 값 분포 (Gate Distribution)</span>
+                            <span class="xai-badge">Decision</span>
+                        </div>
+                        <div class="xai-desc">
+                            학습 기간 동안 \( \alpha \) 값의 분포입니다. 양극단(0과 1)에 데이터가 몰려있다면,
+                            모델이 상황에 따라 추세/패턴 모드를 확실하게 스위칭하고 있다는 증거입니다.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Figure 2: Timeseries Gate -->
+                <div class="xai-figure">
+                    <div class="xai-img-wrapper">
+                        <img src="{{ url_for('serve_analysis', filename='gate_timeseries.png') }}"
+                            alt="시간 흐름에 따른 Gate Value 변화 그래프. 급락장에서 값이 낮아지며 변동성에 반응하는 모습을 보여줍니다."
+                            onerror="this.src='https://placehold.co/600x400/1e1e1e/FFF?text=Analysis+Waiting...'">
+                    </div>
+                    <div class="xai-caption">
+                        <div class="xai-title">
+                            <span>Figure 2. 시계열 모드 전환 (Time-series Switch)</span>
+                            <span class="xai-badge">Dynamics</span>
+                        </div>
+                        <div class="xai-desc">
+                            시간 흐름에 따른 \( \alpha \) 값의 변화입니다.
+                            급락장이 올 때 \( \alpha \)가 급격히 낮아진다면(CNN 모드),
+                            모델이 변동성에 즉각 반응하고 있음을 의미합니다.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Figure 3: Performance -->
+                <div class="xai-figure">
+                    <div class="xai-img-wrapper">
+                        <img src="{{ url_for('serve_analysis', filename='regime_performance.png') }}"
+                            alt="시장 상황별(상승, 하락, 횡보) 모델 성능 비교 그래프. 각 장세에서의 예측 오차(Loss)를 나타냅니다."
+                            onerror="this.src='https://placehold.co/600x400/1e1e1e/FFF?text=Analysis+Waiting...'">
+                    </div>
+                    <div class="xai-caption">
+                        <div class="xai-title">
+                            <span>Figure 3. 시장 상황별 성능 (Regime Performance)</span>
+                            <span class="xai-badge">Validation</span>
+                        </div>
+                        <div class="xai-desc">
+                            상승장(Bull), 하락장(Bear), 횡보장(Sideways) 각각에서의 예측 오차(Loss)를 비교합니다.
+                            특정 장세에 편향되지 않고 고른 성능을 보이는지 검증합니다.
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+    </div>
+</div>
+
+<script>
+    // ScrollSpy 구현 (Sticky TOC 활성화)
+    document.addEventListener('scroll', () => {
+        const sections = document.querySelectorAll('.thesis-section');
+        const navLinks = document.querySelectorAll('.toc-link');
+
+        let current = '';
+        sections.forEach(section => {
+            const sectionTop = section.offsetTop;
+            if (pageYOffset >= (sectionTop - 200)) {
+                current = section.getAttribute('id');
+            }
+        });
+
+        navLinks.forEach(link => {
+            link.classList.remove('active');
+            if (link.getAttribute('href').includes(current)) {
+                link.classList.add('active');
+            }
+        });
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,74 @@
+{
+    "name": "Research Digest Automation",
+    "nodes": [
+        {
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "field": "hours",
+                            "hours": 9
+                        }
+                    ]
+                }
+            },
+            "name": "Cron (09:00 Daily)",
+            "type": "n8n-nodes-base.cron",
+            "typeVersion": 1,
+            "position": [
+                250,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "command": "cd /home/soccz/.gemini/antigravity/scratch/mnt_20t/main/gan_t && /usr/bin/python3 utils/research_reporter.py"
+            },
+            "name": "Generate Research Report",
+            "type": "n8n-nodes-base.executeCommand",
+            "typeVersion": 1,
+            "position": [
+                450,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "url": "http://localhost:5001/api/research/digest/latest",
+                "method": "POST",
+                "options": {}
+            },
+            "name": "Update API Cache",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 1,
+            "position": [
+                650,
+                300
+            ]
+        }
+    ],
+    "connections": {
+        "Cron (09:00 Daily)": {
+            "main": [
+                [
+                    {
+                        "node": "Generate Research Report",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Generate Research Report": {
+            "main": [
+                [
+                    {
+                        "node": "Update API Cache",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    }
+}

@@ -1,0 +1,92 @@
+{
+    "app": {
+        "title": "Chrono-Trader"
+    },
+    "nav": {
+        "home": "Home",
+        "control": "Control Panel",
+        "performance": "Performance",
+        "model": "Model",
+        "docs": "Docs",
+        "tasks": "Tasks"
+    },
+    "footer": {
+        "copyright": "© 2024 Chrono-Trader v2 | Transformer + CNN + GAN"
+    },
+    "home": {
+        "title": "Chrono-Trader Dashboard",
+        "subtitle": "AI-Powered Cryptocurrency Trading System",
+        "total_predictions": "Total Predictions",
+        "accuracy": "Accuracy",
+        "model_status": "Model Status",
+        "system_status": "System Status",
+        "all_time": "All Time",
+        "last_run": "Last Run",
+        "ready": "Ready",
+        "current": "Current",
+        "project_overview": "Project Overview",
+        "architecture_title": "Transformer + CNN + GAN Hybrid Architecture",
+        "architecture_desc": "This system combines Transformer (global trend), CNN (pattern recognition), and GAN (probability distribution) to predict future price movements in cryptocurrency markets.",
+        "strategies_title": "3 Core Strategies",
+        "strategy_trending": "Trend Following",
+        "strategy_trending_desc": "Follows momentum of currently rising coins",
+        "strategy_pattern": "Pattern Matching",
+        "strategy_pattern_desc": "Identifies followers mimicking leader coin patterns",
+        "strategy_pump": "Pump Detection",
+        "strategy_pump_desc": "Predicts 10%+ short-term surge probability",
+        "quick_actions": "Quick Actions",
+        "btn_run_daily": "Run Daily",
+        "btn_train_model": "Train Model",
+        "btn_view_performance": "View Performance",
+        "btn_view_tasks": "View Tasks",
+        "recent_activity": "Recent Activity",
+        "no_activity": "No activity"
+    },
+    "control": {
+        "title": "Control Panel",
+        "training_section": "Model Training",
+        "daily_section": "Daily Pipeline",
+        "backtest_section": "Backtest",
+        "epochs_label": "Epochs:",
+        "daily_epochs_label": "Fine-tune Epochs:",
+        "backtest_days_label": "Days:",
+        "tune_hyperparams": "Tune Hyperparameters",
+        "btn_start_training": "Start Training",
+        "btn_run_daily": "Run Daily",
+        "btn_run_backtest": "Run Backtest",
+        "status_idle": "Idle",
+        "status_running": "Running...",
+        "log_console": "Real-time Logs",
+        "clear_logs": "Clear",
+        "waiting_for_logs": "Waiting for logs..."
+    },
+    "performance": {
+        "title": "Performance Dashboard",
+        "total_predictions": "Total Predictions",
+        "accuracy": "Accuracy",
+        "avg_error": "Avg Error",
+        "win_rate": "Win Rate",
+        "predictions_chart": "Predictions vs Actual",
+        "signal_distribution": "Signal Distribution",
+        "recent_predictions": "Recent Predictions",
+        "market": "Market",
+        "signal": "Signal",
+        "predicted": "Predicted",
+        "actual": "Actual",
+        "error": "Error",
+        "status": "Status"
+    },
+    "model": {
+        "title": "Model Inspector",
+        "architecture": "Model Architecture",
+        "hyperparameters": "Hyperparameters",
+        "saved_models": "Saved Models",
+        "tuned_config": "Tuned Configuration (model_config.json)"
+    },
+    "docs": {
+        "title": "Documentation"
+    },
+    "tasks": {
+        "title": "Tasks & Roadmap"
+    }
+}

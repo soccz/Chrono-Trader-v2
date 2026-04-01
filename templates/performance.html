@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+
+{% block title %}Performance Dashboard - Chrono-Trader{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/performance.css') }}?v=1.1">
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-end mb-4 px-2">
+        <div>
+            <h1 class="page-title">Live Trading Monitor</h1>
+            <p class="text-muted small mb-0"><span class="badge bg-success bg-opacity-10 text-success me-1">●
+                    Live</span> 실시간 모델 추론 및 트레이딩 현황</p>
+        </div>
+
+        <div class="d-flex align-items-center gap-3">
+            <a href="/backtest" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-journal-text me-1"></i>포트폴리오 분석(백테스트) 이동
+            </a>
+            <div class="glass-panel px-3 py-2 d-flex align-items-center gap-2">
+                <span class="text-secondary small" id="stats-mode-label">All Time</span>
+                <div class="form-check form-switch m-0">
+                    <input class="form-check-input" type="checkbox" id="stats-toggle"
+                        style="width: 2.5em; height: 1.25em;" aria-label="전체/주간 통계 전환">
+                </div>
+                <span class="fw-bold small" style="color: var(--ct-primary)">Weekly</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 1: KPI Summary Cards -->
+    <div class="row g-3 mb-4">
+        <!-- Total Predictions -->
+        <div class="col-6 col-md-3">
+            <div class="glass-panel p-4 h-100 d-flex flex-column justify-content-between">
+                <div>
+                    <div class="toss-card-title mb-2">Total Trades</div>
+                    <div class="fs-2 fw-bold text-white nums" id="perf-total">-</div>
+                </div>
+                <div class="badge bg-primary bg-opacity-10 text-primary w-100 mt-2 py-2">All Time</div>
+            </div>
+        </div>
+
+        <!-- Accuracy -->
+        <div class="col-6 col-md-3">
+            <div class="glass-panel p-4 h-100 d-flex flex-column justify-content-between">
+                <div>
+                    <div class="toss-card-title mb-2">Win Rate</div>
+                    <div class="fs-2 fw-bold text-success nums" id="perf-accuracy">-</div>
+                </div>
+                <div class="badge bg-success bg-opacity-10 text-success w-100 mt-2 py-2">Accuracy</div>
+            </div>
+        </div>
+
+        <!-- Total Return -->
+        <div class="col-6 col-md-3">
+            <div class="glass-panel p-4 h-100 d-flex flex-column justify-content-between">
+                <div>
+                    <div class="toss-card-title mb-2">Net Return</div>
+                    <div class="fs-2 fw-bold text-info nums" id="perf-error">-</div>
+                </div>
+                <div class="badge bg-info bg-opacity-10 text-info w-100 mt-2 py-2">PnL</div>
+            </div>
+        </div>
+
+        <!-- Profit Factor -->
+        <div class="col-6 col-md-3">
+            <div class="glass-panel p-4 h-100 d-flex flex-column justify-content-between">
+                <div>
+                    <div class="toss-card-title mb-2">Profit Factor</div>
+                    <div class="fs-2 fw-bold text-warning nums" id="perf-winrate">-</div>
+                </div>
+                <div class="badge bg-warning bg-opacity-10 text-warning w-100 mt-2 py-2">Risk/Reward</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 2: Charts -->
+    <div class="row g-3 mb-4">
+        <!-- Portfolio Allocation -->
+        <div class="col-lg-6">
+            <div class="glass-panel p-4 h-100">
+                <h5 class="toss-card-title mb-4">Portfolio Allocation</h5>
+                <div class="position-relative" style="height: 250px;">
+                    <canvas id="portfolioPieChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Equity Curve -->
+        <div class="col-lg-6">
+            <div class="glass-panel p-4 h-100">
+                <h5 class="toss-card-title mb-4">Capital Growth</h5>
+                <div class="position-relative" style="height: 250px;">
+                    <canvas id="equityChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 3: Gating & Accuracy -->
+    <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+            <div class="glass-panel p-4 h-100">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="toss-card-title mb-0">AI Models</h5>
+                    <span class="badge bg-secondary bg-opacity-10 text-secondary" id="gate-mode-p">--</span>
+                </div>
+
+                <div class="row align-items-center">
+                    <div class="col-12">
+                        <div class="d-flex justify-content-between small text-muted mb-1 nums">
+                            <span>Transformer <span id="gate-transformer-pct-p" class="text-info ms-1">--%</span></span>
+                            <span>CNN <span id="gate-cnn-pct-p" class="text-danger ms-1">--%</span></span>
+                        </div>
+                        <div class="progress mb-3" style="height: 8px;">
+                            <div class="progress-bar bg-info" id="gate-transformer-bar-p" style="width: 0%"></div>
+                            <div class="progress-bar bg-danger" id="gate-cnn-bar-p" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            <div class="glass-panel p-4 h-100">
+                <h5 class="toss-card-title mb-3">Model Accuracy History</h5>
+                <div style="height: 150px;">
+                    <canvas id="accuracyChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 4: Trade History -->
+    <div class="glass-panel p-0 mb-5">
+        <div
+            class="p-4 border-bottom border-secondary border-opacity-10 d-flex justify-content-between align-items-center">
+            <h5 class="toss-card-title mb-0">Trade Ledger</h5>
+            <div class="btn-group btn-group-sm">
+                <button class="btn btn-outline-secondary active" onclick="filterTrades('all')">All</button>
+                <button class="btn btn-outline-secondary" onclick="filterTrades('win')">Wins</button>
+                <button class="btn btn-outline-secondary" onclick="exportToCSV()">
+                    <i class="bi bi-download"></i>
+                </button>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <caption class="visually-hidden">거래 내역 (Trade Ledger)</caption>
+                <thead>
+                    <tr>
+                        <th class="ps-4">Date</th>
+                        <th class="text-center">Pair</th>
+                        <th class="text-center">Type</th>
+                        <th class="text-end">Entry</th>
+                        <th class="text-end">Exit</th>
+                        <th class="text-end">PnL</th>
+                        <th class="text-end pe-4">Status</th>
+                    </tr>
+                </thead>
+                <tbody id="trade-history-body" class="nums">
+                    <!-- JS Injected -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<!-- Chart.js with SRI - 렌더 블로킹 방지 -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
+    integrity="sha384-kccvo77tR1pJPbY7Yve0e0XM1kFfNtVTdolFBVxoNkRYLdW0bfglDPM2Sxnexdj8"
+    crossorigin="anonymous"></script>
+<script src="{{ url_for('static', filename='js/performance.js') }}?v=5.3"></script>
+{% endblock %}

@@ -1,0 +1,59 @@
+{
+    "models": [
+        {
+            "id": 1,
+            "name": "Scalper",
+            "description": "Short-term micro-momentum specialist",
+            "d_model": 64,
+            "n_layers": 2,
+            "n_heads": 2,
+            "dropout_p": 0.1,
+            "cnn_mode": "1D",
+            "cnn_kernel_size": 2,
+            "bagging_ratio": 0.75,
+            "lookback_hours": 48
+        },
+        {
+            "id": 2,
+            "name": "Swing Trader",
+            "description": "Pattern transfer specialist (core purpose)",
+            "d_model": 128,
+            "n_layers": 3,
+            "n_heads": 4,
+            "dropout_p": 0.15,
+            "cnn_mode": "2D",
+            "cnn_kernel_size": 3,
+            "bagging_ratio": 0.85,
+            "lookback_hours": 96,
+            "excluded": true,
+            "excluded_reason": "2D CNN (GAF) causes systematic 2v2 split with 1D TCN models"
+        },
+        {
+            "id": 3,
+            "name": "Trend Follower",
+            "description": "Long-horizon momentum continuation specialist",
+            "d_model": 256,
+            "n_layers": 4,
+            "n_heads": 8,
+            "dropout_p": 0.2,
+            "cnn_mode": "1D",
+            "cnn_kernel_size": 5,
+            "bagging_ratio": 0.9,
+            "lookback_hours": 168
+        },
+        {
+            "id": 4,
+            "name": "Regime Sentinel",
+            "description": "Volatility/tail risk specialist with asymmetric loss",
+            "d_model": 128,
+            "n_layers": 3,
+            "n_heads": 4,
+            "dropout_p": 0.25,
+            "cnn_mode": "1D",
+            "cnn_kernel_size": 3,
+            "bagging_ratio": 1.0,
+            "lookback_hours": 96,
+            "loss_modifier": "asymmetric_tail"
+        }
+    ]
+}

@@ -1,0 +1,245 @@
+/* 
+ * Dashboard Isolated Styles 
+ * Extends design-tokens.css and control.css concepts
+ */
+
+/* --- Typography --- */
+body,
+.toss-card,
+.modal-content {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Pretendard", sans-serif;
+}
+
+.page-title {
+    font-size: 2.2rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    background: linear-gradient(90deg, var(--ct-text-primary), var(--ct-primary));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    display: inline-block;
+    margin-bottom: 0;
+}
+
+.nums {
+    font-variant-numeric: tabular-nums;
+    font-family: 'Inter', sans-serif;
+    letter-spacing: -0.02em;
+}
+
+/* --- Layout --- */
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    /* Main Content + Sidebar */
+    gap: var(--ct-spacing-lg);
+}
+
+@media (max-width: 1200px) {
+    .dashboard-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* --- Ticker Marquee --- */
+.ticker-wrap {
+    width: 100%;
+    overflow: hidden;
+    background: var(--ct-bg-surface);
+    border-bottom: 1px solid var(--ct-border-color);
+    margin-bottom: var(--ct-spacing-md);
+    white-space: nowrap;
+    position: relative;
+    height: 48px;
+    display: flex;
+    align-items: center;
+}
+
+.ticker {
+    display: inline-block;
+    padding-left: 100%;
+    animation: ticker 30s linear infinite;
+}
+
+.ticker__item {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 2rem;
+    font-size: 0.9rem;
+    color: var(--ct-text-primary);
+}
+
+@keyframes ticker {
+    0% {
+        transform: translate3d(0, 0, 0);
+    }
+
+    100% {
+        transform: translate3d(-100%, 0, 0);
+    }
+}
+
+/* --- Cards (Toss Style override) --- */
+.toss-card {
+    background: var(--ct-bg-surface) !important;
+    border: 1px solid var(--ct-border-color) !important;
+    border-radius: var(--ct-radius-md) !important;
+    box-shadow: var(--ct-shadow-sm) !important;
+    color: var(--ct-text-primary) !important;
+    padding: var(--ct-spacing-lg);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.toss-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--ct-shadow-md) !important;
+    border-color: var(--ct-primary) !important;
+}
+
+.toss-card-title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--ct-text-secondary);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-bottom: var(--ct-spacing-md);
+}
+
+/* --- Glass Panels (for Widgets) --- */
+.glass-panel {
+    background: var(--ct-bg-surface, rgba(255, 255, 255, 0.06));
+    border: 1px solid var(--ct-border-color);
+    border-radius: var(--ct-radius-sm);
+    backdrop-filter: blur(10px);
+}
+
+/* --- Prediction Modes --- */
+.mode-trend {
+    border-left: 3px solid #00d2d3;
+    /* Cyan */
+    background: linear-gradient(90deg, rgba(0, 210, 211, 0.05) 0%, transparent 100%);
+}
+
+.mode-pattern {
+    border-left: 3px solid #ff9ff3;
+    /* Pink */
+    background: linear-gradient(90deg, rgba(255, 159, 243, 0.05) 0%, transparent 100%);
+}
+
+/* --- Badges --- */
+.badge-soft {
+    font-weight: 600;
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+
+.tiny-badge {
+    font-size: 0.7em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* --- Progress Bars --- */
+.progress {
+    background-color: var(--ct-bg-surface-elevated);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+/* --- Tables --- */
+.table {
+    margin-bottom: 0;
+    color: var(--ct-text-primary);
+}
+
+.table thead th {
+    font-weight: 600;
+    color: var(--ct-text-secondary);
+    background: var(--ct-bg-surface-elevated);
+    border-bottom: 1px solid var(--ct-border-color);
+    font-size: 0.85rem;
+    padding: 12px;
+}
+
+.table td {
+    border-bottom: 1px solid var(--ct-border-color);
+    padding: 12px;
+}
+
+.table-hover tbody tr:hover {
+    background-color: var(--ct-bg-surface-elevated) !important;
+    cursor: pointer;
+}
+
+/* --- Skeleton Loading --- */
+.skeleton {
+    background: linear-gradient(90deg, var(--ct-bg-surface-elevated) 25%, rgba(255, 255, 255, 0.05) 50%, var(--ct-bg-surface-elevated) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.5s infinite;
+    border-radius: 4px;
+}
+
+@keyframes skeleton-loading {
+    0% {
+        background-position: 200% 0;
+    }
+
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+/* --- Dialog --- */
+dialog {
+    background: var(--ct-bg-surface);
+    color: var(--ct-text-primary);
+    border: 1px solid var(--ct-border-color);
+    border-radius: var(--ct-radius-md);
+    box-shadow: var(--ct-shadow-lg);
+    max-width: 600px;
+    width: 90%;
+    padding: 0;
+}
+
+dialog::backdrop {
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+}
+
+.ops-flag-row {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.25rem;
+}
+
+.ops-flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.ops-flag-warning {
+    background: rgba(255, 193, 7, 0.12);
+    color: #ffd166;
+    border: 1px solid rgba(255, 193, 7, 0.22);
+}
+
+.ops-flag-danger {
+    background: rgba(220, 53, 69, 0.12);
+    color: #ff8fa3;
+    border: 1px solid rgba(220, 53, 69, 0.22);
+}
+
+.ops-flag-info {
+    background: rgba(13, 202, 240, 0.12);
+    color: #7bdff2;
+    border: 1px solid rgba(13, 202, 240, 0.22);
+}

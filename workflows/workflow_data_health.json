@@ -1,0 +1,100 @@
+{
+    "name": "Data Health Monitor",
+    "nodes": [
+        {
+            "parameters": {
+                "interval": 30,
+                "unit": "minutes"
+            },
+            "name": "Cron (Every 30m)",
+            "type": "n8n-nodes-base.cron",
+            "typeVersion": 1,
+            "position": [
+                250,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "url": "http://localhost:5001/api/health/data-pipeline",
+                "method": "GET",
+                "options": {}
+            },
+            "name": "Check Health API",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 1,
+            "position": [
+                450,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "string": [
+                        {
+                            "value1": "={{$json[\"status\"]}}",
+                            "operation": "notEqual",
+                            "value2": "healthy"
+                        }
+                    ]
+                }
+            },
+            "name": "IF Unhealthy",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [
+                650,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "message": "⚠️ Data Pipeline Issue Detected: {{$json[\"status\"]}}\nLatest Rec: {{$json[\"recommendations\"][\"age_hours\"]}} hours ago"
+            },
+            "name": "Log Error",
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                850,
+                200
+            ],
+            "notes": "Connect to Slack/Email here"
+        }
+    ],
+    "connections": {
+        "Cron (Every 30m)": {
+            "main": [
+                [
+                    {
+                        "node": "Check Health API",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Check Health API": {
+            "main": [
+                [
+                    {
+                        "node": "IF Unhealthy",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "IF Unhealthy": {
+            "main": [
+                [
+                    {
+                        "node": "Log Error",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    }
+}

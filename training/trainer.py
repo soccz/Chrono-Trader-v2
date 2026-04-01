@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.autograd as autograd
 from torch.utils.data import DataLoader, TensorDataset, Subset
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
 import numpy as np
 import os
 import optuna
@@ -15,9 +16,33 @@ import models.transformer_encoder
 from scipy.stats import spearmanr
 from sklearn.model_selection import TimeSeriesSplit
 
+
+def _purged_walk_forward_splits(n: int, n_splits: int = 5, embargo: int = 6):
+    """Purged Walk-Forward splits with embargo.
+    Yields (train_idx, val_idx) where the last `embargo` samples before val are dropped.
+    """
+    fold_size = n // (n_splits + 1)
+    splits = []
+    for k in range(n_splits):
+        train_end = fold_size * (k + 1)
+        val_start = train_end + embargo
+        val_end = val_start + fold_size
+        if val_end > n:
+            break
+        train_idx = np.arange(0, train_end)
+        val_idx = np.arange(val_start, val_end)
+        splits.append((train_idx, val_idx))
+    return splits
+
 from utils.config import config
 from utils.logger import logger
-from data.preprocessor import get_processed_data_for_training, get_market_index
+from data.preprocessor import (
+    get_processed_data_for_training,
+    get_market_index,
+    get_intermediate_data,
+    get_crypto_factors,
+    create_train_val_sequences_and_scale,
+)
 from models.hybrid_model import build_model
 from models.critic import build_critic
 
@@ -102,12 +127,12 @@ def objective(trial, X, y):
 
     # --- K-Fold Cross-Validation Setup ---
     n_splits = 5
-    tscv = TimeSeriesSplit(n_splits=n_splits)
+    splits = _purged_walk_forward_splits(len(X), n_splits=n_splits, embargo=6)
     fold_correlations = []
-    
-    logger.info(f"Trial {trial.number}: Starting {n_splits}-Fold TimeSeries Cross-Validation...")
 
-    for fold, (train_index, val_index) in enumerate(tscv.split(X)):
+    logger.info(f"Trial {trial.number}: Starting {n_splits}-Fold Purged Walk-Forward CV (embargo=6)...")
+
+    for fold, (train_index, val_index) in enumerate(splits):
         logger.info(f"  - Fold {fold+1}/{n_splits}...")
         try:
             # --- Data Setup for current fold ---
@@ -131,10 +156,21 @@ def objective(trial, X, y):
             )
 
             # --- Model & Optimizer Setup ---
-            generator = build_model(d_model=d_model, n_heads=n_heads, n_layers=n_layers, input_dim=X.shape[-1], noise_dim=config.Gan.NOISE_DIM, output_dim=y.shape[-1], dropout_p=dropout_p)
-            critic = build_critic()
+            decoder_mode = getattr(config.Gan, "DECODER_MODE", "gan")
+            pe_mode = getattr(config.Gan, "PE_MODE", "cycle_pe")
+            generator = build_model(
+                d_model=d_model, n_heads=n_heads, n_layers=n_layers,
+                input_dim=X.shape[-1], noise_dim=config.Gan.NOISE_DIM,
+                output_dim=y.shape[-1], dropout_p=dropout_p,
+                decoder_mode=decoder_mode,
+                pe_mode=pe_mode,
+            )
             optimizer_G = optim.Adam(generator.parameters(), lr=lr_g, betas=(0.5, 0.9))
-            optimizer_C = optim.Adam(critic.parameters(), lr=lr_c, betas=(0.5, 0.9))
+            critic = None
+            optimizer_C = None
+            if decoder_mode == "gan":
+                critic = build_critic()
+                optimizer_C = optim.Adam(critic.parameters(), lr=lr_c, betas=(0.5, 0.9))
             recon_criterion = nn.MSELoss()
             
             # Use hyperparameters suggested by Optuna for this trial
@@ -147,32 +183,61 @@ def objective(trial, X, y):
             fold_adv_losses = [] # For stability penalty
             for epoch in range(15): # A reasonable number of epochs for a single trial
                 generator.train()
-                critic.train()
+                if critic is not None:
+                    critic.train()
                 for batch_idx, (real_sequences, real_paths) in enumerate(train_loader):
                     real_sequences, real_paths = real_sequences.to(config.Device.DEVICE), real_paths.to(config.Device.DEVICE)
                     if real_sequences.size(0) <= 1: continue
 
-                    # Use critic_base_iters suggested by Optuna
-                    for _ in range(critic_base_iters):
-                        optimizer_C.zero_grad()
-                        fake_paths = generator(real_sequences).detach()
-                        real_validity = critic(real_paths)
-                        fake_validity_critic = critic(fake_paths)
-                        gradient_penalty, grad_norm = compute_gradient_penalty(critic, real_paths.data, fake_paths.data)
-                        loss_C = fake_validity_critic.mean() - real_validity.mean() + lambda_gp_run * gradient_penalty
-                        loss_C.backward()
-                        torch.nn.utils.clip_grad_norm_(critic.parameters(), max_norm=1.0)
-                        optimizer_C.step()
-
                     optimizer_G.zero_grad()
-                    gen_paths = generator(real_sequences)
-                    loss_G_adv = -critic(gen_paths).mean()
-                    loss_G_recon = recon_criterion(gen_paths, real_paths)
-                    pred_return = gen_paths.sum(dim=1)
-                    real_return = real_paths.sum(dim=1)
-                    pred_prob = torch.sigmoid(pred_return)
+                    if decoder_mode == "cvae":
+                        gen_paths = generator.forward_train(real_sequences, real_paths)
+                        # gen_paths is now mu (mean prediction)
+                        mu = getattr(generator, "_cvae_mu", gen_paths)
+                        log_sigma = getattr(generator, "_cvae_log_sigma", None)
+                        loss_G_adv = torch.tensor(0.0, device=config.Device.DEVICE)
+                        grad_norm = torch.tensor(0.0, device=config.Device.DEVICE)
+                        kl_loss = torch.tensor(0.0, device=config.Device.DEVICE)  # no KL
+                    else:
+                        # Use critic_base_iters suggested by Optuna
+                        for _ in range(critic_base_iters):
+                            optimizer_C.zero_grad()
+                            fake_paths = generator(real_sequences).detach()
+                            real_validity = critic(real_paths)
+                            fake_validity_critic = critic(fake_paths)
+                            gradient_penalty, grad_norm = compute_gradient_penalty(critic, real_paths.data, fake_paths.data)
+                            loss_C = fake_validity_critic.mean() - real_validity.mean() + lambda_gp_run * gradient_penalty
+                            loss_C.backward()
+                            torch.nn.utils.clip_grad_norm_(critic.parameters(), max_norm=1.0)
+                            optimizer_C.step()
+
+                        gen_paths = generator(real_sequences)
+                        loss_G_adv = -critic(gen_paths).mean()
+                        kl_loss = torch.tensor(0.0, device=config.Device.DEVICE)
+                        mu = gen_paths
+                        log_sigma = None
+                    if log_sigma is not None:
+                        # Gaussian NLL: log_sigma + 0.5 * (y - mu)^2 / sigma^2
+                        loss_G_recon = (log_sigma + 0.5 * (real_paths - mu).pow(2) / (torch.exp(log_sigma).pow(2) + 1e-8)).mean()
+                    else:
+                        loss_G_recon = recon_criterion(gen_paths, real_paths)
+                    # --- Focal-style direction loss (replaces broken sigmoid(mean_return) ECE) ---
+                    pred_return = gen_paths.mean(dim=1)
+                    real_return = real_paths.mean(dim=1)
+                    fused_ctx = getattr(generator, '_cvae_fused_context', None)
+                    if fused_ctx is not None and hasattr(generator, 'decoder') and hasattr(generator.decoder, 'confidence_head'):
+                        pred_prob = generator.decoder.confidence_head(fused_ctx.detach()).squeeze(-1)
+                    else:
+                        pred_prob = torch.sigmoid(pred_return * 10.0)
                     target_prob = (real_return > 0).float()
-                    loss_G_ece = ((pred_prob - target_prob) ** 2).mean()
+                    pt = target_prob * pred_prob + (1 - target_prob) * (1 - pred_prob)
+                    focal_weight = (1 - pt) ** 2
+                    loss_G_ece = (focal_weight * nn.functional.binary_cross_entropy(pred_prob.clamp(1e-6, 1 - 1e-6), target_prob, reduction='none')).mean()
+
+                    # --- Direction Balance Loss ---
+                    pred_direction_prob = torch.sigmoid(gen_paths[:, -1] - gen_paths[:, 0])
+                    direction_balance = torch.abs(pred_direction_prob.mean() - 0.5)
+                    loss_G_balance = direction_balance * 0.1
 
                     # --- Directional Loss (penalizes wrong direction predictions) ---
                     pred_dir_logit = gen_paths[:, -1] - gen_paths[:, 0]
@@ -186,38 +251,54 @@ def objective(trial, X, y):
                     weights = 1.0 + movement_magnitude / (movement_magnitude.mean() + 1e-8)
                     loss_G_recon_weighted = (weights * (gen_paths - real_paths).pow(2).mean(dim=1)).mean()
 
-                    loss_G = loss_G_adv + lambda_recon_run * loss_G_recon_weighted + lambda_ece * loss_G_ece + lambda_direction * loss_G_direction
+                    # --- Gate Regularization Loss ---
+                    loss_G_gate_reg = getattr(generator, '_gate_reg_loss', torch.tensor(0.0).to(config.Device.DEVICE))
+
+                    kl_weight = 0.0  # heteroscedastic: no KL term
+
+                    loss_G = (
+                        loss_G_adv
+                        + lambda_recon_run * loss_G_recon  # NLL (includes log_sigma gradient)
+                        + lambda_ece * loss_G_ece
+                        + loss_G_balance
+                        + loss_G_gate_reg * 0.5
+                        + lambda_direction * loss_G_direction
+                    )
                     loss_G.backward()
                     torch.nn.utils.clip_grad_norm_(generator.parameters(), max_norm=1.0)
                     optimizer_G.step()
 
-                    # Track adversarial loss for stability penalty
-                    fold_adv_losses.append(loss_G_adv.item())
+                    if decoder_mode == "gan":
+                        # Track adversarial loss for stability penalty
+                        fold_adv_losses.append(loss_G_adv.item())
 
-                    # Dynamic balancing for reconstruction weight (respects config min/max)
-                    adv_abs = loss_G_adv.abs().item()
-                    recon_val = loss_G_recon.abs().item() + 1e-9
-                    current_ratio = adv_abs / recon_val
-                    if current_ratio < target_adv_ratio * 0.5:
-                        lambda_recon_run = max(config.Gan.Dynamics.LAMBDA_RECON_MIN, lambda_recon_run * 0.9)
-                    elif current_ratio > target_adv_ratio * 1.5:
-                        lambda_recon_run = min(config.Gan.Dynamics.LAMBDA_RECON_MAX, lambda_recon_run * 1.1)
+                        # Dynamic balancing for reconstruction weight (respects config min/max)
+                        adv_abs = loss_G_adv.abs().item()
+                        recon_val = loss_G_recon.abs().item() + 1e-9
+                        current_ratio = adv_abs / recon_val
+                        if current_ratio < target_adv_ratio * 0.5:
+                            lambda_recon_run = max(config.Gan.Dynamics.LAMBDA_RECON_MIN, lambda_recon_run * 0.9)
+                        elif current_ratio > target_adv_ratio * 1.5:
+                            lambda_recon_run = min(config.Gan.Dynamics.LAMBDA_RECON_MAX, lambda_recon_run * 1.1)
 
-                    # Dynamic gradient penalty adjustment (respects config min/max)
-                    if grad_norm.item() < 0.8:
-                        lambda_gp_run = min(lambda_gp_run * 1.05, config.Gan.Dynamics.LAMBDA_GP_MAX)
-                    elif grad_norm.item() > 1.2:
-                        lambda_gp_run = max(lambda_gp_run * 0.95, config.Gan.Dynamics.LAMBDA_GP_MIN)
+                        # Dynamic gradient penalty adjustment (respects config min/max)
+                        if grad_norm.item() < 0.8:
+                            lambda_gp_run = min(lambda_gp_run * 1.05, config.Gan.Dynamics.LAMBDA_GP_MAX)
+                        elif grad_norm.item() > 1.2:
+                            lambda_gp_run = max(lambda_gp_run * 0.95, config.Gan.Dynamics.LAMBDA_GP_MIN)
 
             # --- Evaluation for Uncertainty Correlation on the fold ---
             N_INFERENCES_TUNE = 30
             all_errors = []
             all_uncertainties = []
 
-            generator.train() # Enable dropout for MC-Dropout
-            for module in generator.modules():
-                if isinstance(module, torch.nn.BatchNorm1d):
-                    module.eval()
+            if decoder_mode == "gan":
+                generator.train() # Enable dropout for MC-Dropout
+                for module in generator.modules():
+                    if isinstance(module, torch.nn.BatchNorm1d):
+                        module.eval()
+            else:
+                generator.eval()
 
             with torch.no_grad():
                 for batch_X, batch_y in val_loader:
@@ -312,8 +393,15 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
     
     if tune:
         logger.info("--- Starting Hyperparameter Tuning with Optuna ---")
-        X, y, _ = get_processed_data_for_training(config.Data.MARKET_INDEX_COINS[0], market_index_df)
+        # Use a mid-size alt for tuning to avoid OOM on BTC (62k rows)
+        tune_market = _env_str("AETHER_OPTUNA_TUNE_MARKET", "KRW-XRP")
+        X, y, _ = get_processed_data_for_training(tune_market, market_index_df)
         if X is None: return
+        # Cap at recent 5000 samples to keep each trial fast
+        MAX_TUNE_SAMPLES = int(_env_str("AETHER_OPTUNA_MAX_SAMPLES", "5000") or "5000")
+        if len(X) > MAX_TUNE_SAMPLES:
+            X, y = X[-MAX_TUNE_SAMPLES:], y[-MAX_TUNE_SAMPLES:]
+            logger.info(f"Tuning data capped at {MAX_TUNE_SAMPLES} samples (most recent)")
 
         # IMPORTANT: We are now MAXIMIZING the correlation
         opt_trials = _env_int("AETHER_OPTUNA_TRIALS", 50)
@@ -378,34 +466,82 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
     logger.info(f"--- Preparing for {mode_log} ---")
 
     if is_finetuning:
-        X_list, y_list = [], []
-        for market in markets:
-            X_market, y_market, _ = get_processed_data_for_training(market, market_index_df)
-            if X_market is not None: X_list.append(X_market); y_list.append(y_market)
-        if not X_list: logger.error("No data for fine-tuning."); return
-        X, y = np.concatenate(X_list, axis=0), np.concatenate(y_list, axis=0)
+        target_markets = list(markets or [])
         lr = config.Gan.LEARNING_RATE_G / 10
     else: # Full Training on all target markets
-        full_train_markets = getattr(config.Data, "TRAIN_COINS", config.Data.MARKET_INDEX_COINS)
-        logger.info(f"Starting full training data assembly for markets: {full_train_markets}")
-        X_list, y_list = [], []
-        for market in full_train_markets:
-            X_market, y_market, _ = get_processed_data_for_training(market, market_index_df)
-            if X_market is not None:
-                X_list.append(X_market)
-                y_list.append(y_market)
-        
-        if not X_list:
-            logger.error("Training failed: No data could be assembled for any target market.")
-            return
-
-        X, y = np.concatenate(X_list, axis=0), np.concatenate(y_list, axis=0)
-        logger.info(f"Assembled full training dataset with shape X: {X.shape}, y: {y.shape}")
+        from data.database import get_top_markets_by_trading_value
+        exclude_tokens = tuple(t.upper() for t in getattr(config.Data, "DYNAMIC_UNIVERSE_EXCLUDE", []))
+        top_n = int(getattr(config.Data, "DYNAMIC_UNIVERSE_TOP_N", 100))
+        dynamic_markets = get_top_markets_by_trading_value(limit=top_n, hours=24)
+        dynamic_markets = [
+            m for m in dynamic_markets
+            if not any(tok in m.upper() for tok in exclude_tokens)
+        ]
+        target_markets = dynamic_markets or getattr(config.Data, "TRAIN_COINS_FALLBACK", config.Data.MARKET_INDEX_COINS)
+        logger.info(f"Dynamic universe: {len(target_markets)} markets (top {top_n} by 24h volume)")
         lr = config.Gan.LEARNING_RATE_G
+
+    X_train_list, y_train_list = [], []
+    X_val_list, y_val_list = [], []
+    crypto_factors_df, rank_4h_df = get_crypto_factors()
+    for market in target_markets:
+        df_market, _ = get_intermediate_data(
+            market,
+            market_index_df,
+            historical_df=None,
+            crypto_factors_df=crypto_factors_df,
+            rank_4h_df=rank_4h_df,
+        )
+        if df_market is None:
+            continue
+        X_train_market, y_train_market, X_val_market, y_val_market, _ = create_train_val_sequences_and_scale(
+            df_market,
+            scaler=MinMaxScaler(),
+            train_ratio=config.Gan.TRAIN_SPLIT,
+        )
+        if X_train_market is None or X_val_market is None:
+            continue
+        X_train_list.append(X_train_market)
+        y_train_list.append(y_train_market)
+        X_val_list.append(X_val_market)
+        y_val_list.append(y_val_market)
+
+    if not X_train_list or not X_val_list:
+        logger.error("Training failed: no chronological train/validation sequences could be assembled.")
+        return
+
+    X_train_all = np.concatenate(X_train_list, axis=0)
+    y_train_all = np.concatenate(y_train_list, axis=0)
+    X_val_all = np.concatenate(X_val_list, axis=0)
+    y_val_all = np.concatenate(y_val_list, axis=0)
+    logger.info(
+        f"Assembled chronological dataset with train X:{X_train_all.shape}, y:{y_train_all.shape} | "
+        f"val X:{X_val_all.shape}, y:{y_val_all.shape}"
+    )
+
+    # Temporal holdout: carve out last 20% of val sequences as out-of-sample test set.
+    # Val sequences are already sorted chronologically (after train), so tail = most recent.
+    holdout_ratio = 0.20
+    holdout_start = int(len(X_val_all) * (1 - holdout_ratio))
+    X_holdout = X_val_all[holdout_start:]
+    y_holdout = y_val_all[holdout_start:]
+    X_val_all = X_val_all[:holdout_start]
+    y_val_all = y_val_all[:holdout_start]
+    logger.info(
+        f"[HOLDOUT] Reserved last {holdout_ratio*100:.0f}% of val set as holdout: "
+        f"holdout X:{X_holdout.shape}, y:{y_holdout.shape} | "
+        f"remaining val X:{X_val_all.shape}, y:{y_val_all.shape}"
+    )
 
     # If epochs is not passed as an argument, use config defaults
     if epochs is None:
         epochs = config.Gan.EPOCHS
+
+    logger.info(
+        "Model modes: decoder_mode=%s, pe_mode=%s",
+        getattr(config.Gan, "DECODER_MODE", "gan"),
+        getattr(config.Gan, "PE_MODE", "cycle_pe"),
+    )
 
     effective_batch_size = _effective_batch_size(config.Gan.BATCH_SIZE)
     if effective_batch_size != config.Gan.BATCH_SIZE:
@@ -455,15 +591,29 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
         cnn_mode = model_cfg.get("cnn_mode", config.Gan.CNN_MODE)
         bagging_ratio = model_cfg.get("bagging_ratio", 0.9)
         
+        lookback_hours = model_cfg.get("lookback_hours", None)
+        cnn_kernel_size = model_cfg.get("cnn_kernel_size", None)
+
         logger.info(f"\n--- Training Ensemble Model {model_id}/{len(model_configs)}: {model_name} ---")
-        logger.info(f"    d_model={d_model}, n_layers={n_layers}, n_heads={n_heads}, dropout={dropout_p}, cnn={cnn_mode}, bagging={bagging_ratio}")
-        
+        logger.info(f"    d_model={d_model}, n_layers={n_layers}, n_heads={n_heads}, dropout={dropout_p}, cnn={cnn_mode}, bagging={bagging_ratio}, lookback={lookback_hours}")
+
         # Temporarily override CNN_MODE for this model
         original_cnn_mode = config.Gan.CNN_MODE
         config.Gan.CNN_MODE = cnn_mode
-        
-        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=1 - config.Gan.TRAIN_SPLIT, random_state=42 + model_id)
-        
+
+        # Per-model lookback slicing: trim sequences temporally if lookback_hours < SEQUENCE_LENGTH
+        if lookback_hours is not None and lookback_hours < X_train_all.shape[1]:
+            X_train = X_train_all[:, -lookback_hours:, :]
+            X_val = X_val_all[:, -lookback_hours:, :]
+            X_holdout_model = X_holdout[:, -lookback_hours:, :]
+            logger.info(f"    Lookback slicing: {X_train_all.shape[1]}h -> {lookback_hours}h (seq_len={X_train.shape[1]})")
+        else:
+            X_train = X_train_all
+            X_val = X_val_all
+            X_holdout_model = X_holdout
+        y_train = y_train_all
+        y_val = y_val_all
+
         full_train_dataset = TensorDataset(torch.FloatTensor(X_train), torch.FloatTensor(y_train))
         n_samples = len(full_train_dataset)
         subset_size = int(n_samples * bagging_ratio)
@@ -492,7 +642,7 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
             try:
                 generator = torch.load(model_save_path, map_location=config.Device.DEVICE, weights_only=False)
                 loaded_input_dim = getattr(generator, "input_dim", None)
-                expected_input_dim = X.shape[-1]
+                expected_input_dim = X_train.shape[-1]
                 if loaded_input_dim is not None and loaded_input_dim != expected_input_dim:
                     raise ValueError(
                         f"Checkpoint input_dim mismatch (loaded={loaded_input_dim}, expected={expected_input_dim})"
@@ -500,22 +650,43 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
                 logger.info(f"Loaded model {model_id} for fine-tuning.")
             except Exception as e:
                 logger.error(f"Could not load model {model_id}: {e}. Rebuilding.")
-                generator = build_model(d_model=d_model, n_heads=n_heads, n_layers=n_layers, input_dim=X.shape[-1], noise_dim=config.Gan.NOISE_DIM, output_dim=y.shape[-1], dropout_p=dropout_p)
+                generator = build_model(
+                    d_model=d_model, n_heads=n_heads, n_layers=n_layers,
+                    input_dim=X_train.shape[-1], noise_dim=config.Gan.NOISE_DIM,
+                    output_dim=y_train.shape[-1], dropout_p=dropout_p,
+                    decoder_mode=getattr(config.Gan, "DECODER_MODE", "gan"),
+                    pe_mode=getattr(config.Gan, "PE_MODE", "cycle_pe"),
+                )
         else:
-            generator = build_model(d_model=d_model, n_heads=n_heads, n_layers=n_layers, input_dim=X.shape[-1], noise_dim=config.Gan.NOISE_DIM, output_dim=y.shape[-1], dropout_p=dropout_p)
+            generator = build_model(
+                d_model=d_model, n_heads=n_heads, n_layers=n_layers,
+                input_dim=X_train.shape[-1], noise_dim=config.Gan.NOISE_DIM,
+                output_dim=y_train.shape[-1], dropout_p=dropout_p,
+                decoder_mode=getattr(config.Gan, "DECODER_MODE", "gan"),
+                pe_mode=getattr(config.Gan, "PE_MODE", "cycle_pe"),
+            )
         
-        critic = build_critic()
+        decoder_mode = getattr(config.Gan, "DECODER_MODE", "gan")
         # Use separate learning rates for Generator and Critic (TTUR)
         lr_g = lr # The 'lr' variable is now correctly set to LEARNING_RATE_G
         lr_c = config.Gan.LEARNING_RATE_C if not is_finetuning else config.Gan.LEARNING_RATE_C / 10
         optimizer_G = optim.Adam(generator.parameters(), lr=lr_g, betas=(0.5, 0.9))
-        optimizer_C = optim.Adam(critic.parameters(), lr=lr_c, betas=(0.5, 0.9))
+        critic = None
+        optimizer_C = None
+        if decoder_mode == "gan":
+            critic = build_critic()
+            optimizer_C = optim.Adam(critic.parameters(), lr=lr_c, betas=(0.5, 0.9))
         
         # Learning Rate Schedulers (Cosine Annealing for smooth decay)
         scheduler_G = optim.lr_scheduler.CosineAnnealingLR(optimizer_G, T_max=epochs, eta_min=lr_g * 0.01)
-        scheduler_C = optim.lr_scheduler.CosineAnnealingLR(optimizer_C, T_max=epochs, eta_min=lr_c * 0.01)
+        scheduler_C = None
+        if optimizer_C is not None:
+            scheduler_C = optim.lr_scheduler.CosineAnnealingLR(optimizer_C, T_max=epochs, eta_min=lr_c * 0.01)
         
-        logger.info(f"Optimizers created. Generator LR: {lr_g:.6f}, Critic LR: {lr_c:.6f}")
+        if optimizer_C is not None:
+            logger.info(f"Optimizers created. Generator LR: {lr_g:.6f}, Critic LR: {lr_c:.6f}")
+        else:
+            logger.info(f"Optimizer created. Generator LR: {lr_g:.6f} (CVAE mode)")
         logger.info(f"LR Schedulers: CosineAnnealingLR with T_max={epochs}")
         recon_criterion = nn.MSELoss()
         best_val_recon_loss = float('inf')
@@ -541,43 +712,73 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
 
         for epoch in range(epochs):
             generator.train()
-            critic.train()
+            if critic is not None:
+                critic.train()
             for batch_idx, (real_sequences, real_paths) in enumerate(train_loader):
                 real_sequences, real_paths = real_sequences.to(config.Device.DEVICE), real_paths.to(config.Device.DEVICE)
                 if real_sequences.size(0) <= 1: continue
 
-                c_iters = critic_base_iters
-                if total_steps > config.Gan.Dynamics.GAN_WARMUP_STEPS:
-                    if loss_G_adv.item() < config.Gan.Dynamics.TARGET_ADV_LOSS:
-                        c_iters = min(critic_max_iters, c_iters + 2)
-                    else:
-                        c_iters = max(critic_min_iters, c_iters - 1)
-
-                # Critic updates (WGAN-GP)
-                for _ in range(c_iters):
-                    optimizer_C.zero_grad()
-                    fake_paths = generator(real_sequences).detach()
-                    real_validity = critic(real_paths)
-                    fake_validity_critic = critic(fake_paths)
-                    gradient_penalty, grad_norm = compute_gradient_penalty(
-                        critic, real_paths.data, fake_paths.data
-                    )
-                    loss_C = fake_validity_critic.mean() - real_validity.mean() + lambda_gp_run * gradient_penalty
-                    loss_C.backward()
-                    torch.nn.utils.clip_grad_norm_(critic.parameters(), max_norm=1.0)
-                    optimizer_C.step()
-
-                # Generator update (exactly once per batch for stability)
                 optimizer_G.zero_grad()
-                gen_paths = generator(real_sequences)
-                loss_G_adv = -critic(gen_paths).mean()
-                loss_G_recon = recon_criterion(gen_paths, real_paths)
+                if decoder_mode == "gan":
+                    c_iters = critic_base_iters
+                    if total_steps > config.Gan.Dynamics.GAN_WARMUP_STEPS:
+                        if loss_G_adv.item() < config.Gan.Dynamics.TARGET_ADV_LOSS:
+                            c_iters = min(critic_max_iters, c_iters + 2)
+                        else:
+                            c_iters = max(critic_min_iters, c_iters - 1)
 
-                pred_return = gen_paths.sum(dim=1)
-                real_return = real_paths.sum(dim=1)
-                pred_prob = torch.sigmoid(pred_return)
+                    # Critic updates (WGAN-GP)
+                    for _ in range(c_iters):
+                        optimizer_C.zero_grad()
+                        fake_paths = generator(real_sequences).detach()
+                        real_validity = critic(real_paths)
+                        fake_validity_critic = critic(fake_paths)
+                        gradient_penalty, grad_norm = compute_gradient_penalty(
+                            critic, real_paths.data, fake_paths.data
+                        )
+                        loss_C = fake_validity_critic.mean() - real_validity.mean() + lambda_gp_run * gradient_penalty
+                        loss_C.backward()
+                        torch.nn.utils.clip_grad_norm_(critic.parameters(), max_norm=1.0)
+                        optimizer_C.step()
+
+                    # Generator update (exactly once per batch for stability)
+                    gen_paths = generator(real_sequences)
+                    loss_G_adv = -critic(gen_paths).mean()
+                    kl_loss = torch.tensor(0.0, device=config.Device.DEVICE)
+                    mu = gen_paths
+                    log_sigma = None
+                else:
+                    c_iters = 0
+                    grad_norm = torch.tensor(0.0, device=config.Device.DEVICE)
+                    gradient_penalty = torch.tensor(0.0, device=config.Device.DEVICE)
+                    loss_C = torch.tensor(0.0, device=config.Device.DEVICE)
+                    real_validity = torch.tensor(0.0, device=config.Device.DEVICE)
+                    fake_validity_critic = torch.tensor(0.0, device=config.Device.DEVICE)
+                    gen_paths = generator.forward_train(real_sequences, real_paths)
+                    # gen_paths is now mu (mean prediction)
+                    mu = getattr(generator, "_cvae_mu", gen_paths)
+                    log_sigma = getattr(generator, "_cvae_log_sigma", None)
+                    loss_G_adv = torch.tensor(0.0, device=config.Device.DEVICE)
+                    kl_loss = torch.tensor(0.0, device=config.Device.DEVICE)  # no KL
+                if log_sigma is not None:
+                    # Gaussian NLL: log_sigma + 0.5 * (y - mu)^2 / sigma^2
+                    loss_G_recon = (log_sigma + 0.5 * (real_paths - mu).pow(2) / (torch.exp(log_sigma).pow(2) + 1e-8)).mean()
+                else:
+                    loss_G_recon = recon_criterion(gen_paths, real_paths)
+
+                # --- Focal-style direction loss (replaces broken sigmoid(mean_return) ECE) ---
+                pred_return = gen_paths.mean(dim=1)
+                real_return = real_paths.mean(dim=1)
+                fused_ctx = getattr(generator, '_cvae_fused_context', None)
+                if fused_ctx is not None and hasattr(generator, 'decoder') and hasattr(generator.decoder, 'confidence_head'):
+                    pred_prob = generator.decoder.confidence_head(fused_ctx.detach()).squeeze(-1)
+                else:
+                    pred_prob = torch.sigmoid(pred_return * 10.0)  # sharper sigmoid with scaling
                 target_prob = (real_return > 0).float()
-                loss_G_ece = ((pred_prob - target_prob) ** 2).mean()
+                # Focal-style: down-weight easy examples
+                pt = target_prob * pred_prob + (1 - target_prob) * (1 - pred_prob)
+                focal_weight = (1 - pt) ** 2
+                loss_G_ece = (focal_weight * nn.functional.binary_cross_entropy(pred_prob.clamp(1e-6, 1 - 1e-6), target_prob, reduction='none')).mean()
 
                 # --- Direction Balance Loss ---
                 pred_direction_prob = torch.sigmoid(gen_paths[:, -1] - gen_paths[:, 0])
@@ -598,10 +799,12 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
 
                 # --- Gate Regularization Loss ---
                 loss_G_gate_reg = getattr(generator, '_gate_reg_loss', torch.tensor(0.0).to(config.Device.DEVICE))
-                
+
+                kl_weight = 0.0  # heteroscedastic: no KL term
+
                 loss_G = (
                     loss_G_adv
-                    + lambda_recon_run * loss_G_recon_weighted
+                    + lambda_recon_run * loss_G_recon  # NLL (includes log_sigma gradient)
                     + lambda_ece * loss_G_ece
                     + loss_G_balance
                     + loss_G_gate_reg * 0.5
@@ -613,84 +816,91 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
 
                 total_steps += 1
 
-                # Keep metrics updated for auto-stop checks
-                monitor_recon_floor = max(abs(loss_G_recon.item()), 1e-2)
-                ratio_value = float(loss_G_adv.item() / monitor_recon_floor)
-                metric_history['ratio'].append(ratio_value)
-                metric_history['grad_norm'].append(grad_norm.item())
+                if decoder_mode == "gan":
+                    # Keep metrics updated for auto-stop checks
+                    monitor_recon_floor = max(abs(loss_G_recon.item()), 1e-2)
+                    ratio_value = float(loss_G_adv.item() / monitor_recon_floor)
+                    metric_history['ratio'].append(ratio_value)
+                    metric_history['grad_norm'].append(grad_norm.item())
 
-                if batch_idx % 20 == 0:
-                    w_est = real_validity.mean() - fake_validity_critic.mean()
+                    if batch_idx % 20 == 0:
+                        w_est = real_validity.mean() - fake_validity_critic.mean()
+                        logger.info(
+                            f"Epoch [{epoch+1}/{epochs}] | Batch [{batch_idx}/{len(train_loader)}] | "
+                            f"C_iters: {c_iters} | W_est:{w_est:.4f} | ||∇D||:{grad_norm:.3f} | GP:{gradient_penalty:.3f} | "
+                            f"lossC:{loss_C:.3f} | lossG_adv:{loss_G_adv:.3f} | lossG_recon:{loss_G_recon:.3f} | "
+                            f"lossG_ece:{loss_G_ece:.4f} | ratio:{ratio_value:.3f}"
+                        )
+
+                    # --- GAN Stability Check (Auto-stopping) ---
+                    if total_steps > rules['warmup_steps'] and total_steps % rules['check_interval'] == 0:
+                        window = rules['moving_avg_window']
+                        if len(metric_history['ratio']) >= window:
+                            avg_ratio = np.mean(metric_history['ratio'][-window:])
+                            avg_grad_norm = np.mean(metric_history['grad_norm'][-window:])
+
+                            if not (rules['warnings']['ratio_range'][0] <= avg_ratio <= rules['warnings']['ratio_range'][1]):
+                                logger.warning(f"[Auto-stop] Warning: Moving avg of ratio ({avg_ratio:.3f}) is outside the warning range {rules['warnings']['ratio_range']}.")
+                            if not (rules['warnings']['grad_norm_range'][0] <= avg_grad_norm <= rules['warnings']['grad_norm_range'][1]):
+                                logger.warning(f"[Auto-stop] Warning: Moving avg of grad_norm ({avg_grad_norm:.3f}) is outside the warning range {rules['warnings']['grad_norm_range']}.")
+
+                            if avg_ratio < rules['strong_stop']['ratio_lower_bound']:
+                                strong_stop_counters['ratio_sustained'] += rules['check_interval']
+                            else:
+                                strong_stop_counters['ratio_sustained'] = 0
+
+                            if not (rules['strong_stop']['grad_norm_range'][0] <= avg_grad_norm <= rules['strong_stop']['grad_norm_range'][1]):
+                                strong_stop_counters['grad_norm_sustained'] += rules['check_interval']
+                            else:
+                                strong_stop_counters['grad_norm_sustained'] = 0
+
+                            if strong_stop_counters['ratio_sustained'] >= rules['strong_stop']['sustained_steps']:
+                                logger.error(f"[Auto-stop] STOP: GAN ratio has been below {rules['strong_stop']['ratio_lower_bound']} for {strong_stop_counters['ratio_sustained']} steps. Stopping training.")
+                                stop_training_flag = True
+
+                            if strong_stop_counters['grad_norm_sustained'] >= rules['strong_stop']['sustained_steps']:
+                                logger.error(f"[Auto-stop] STOP: Grad norm has been outside {rules['strong_stop']['grad_norm_range']} for {strong_stop_counters['grad_norm_sustained']} steps. Stopping training.")
+                                stop_training_flag = True
+
+                    adv_abs = loss_G_adv.abs().item()
+                    recon_val = loss_G_recon.abs().item() + 1e-9
+                    current_ratio = adv_abs / recon_val
+                    if current_ratio < target_adv_ratio * 0.5:
+                        lambda_recon_run = max(lambda_recon_min, lambda_recon_run * 0.9)
+                    elif current_ratio > target_adv_ratio * 1.5:
+                        lambda_recon_run = min(lambda_recon_max, lambda_recon_run * 1.1)
+
+                    if grad_norm.item() < 0.8:
+                        lambda_gp_run = min(lambda_gp_run * 1.05, config.Gan.Dynamics.LAMBDA_GP_MAX)
+                    elif grad_norm.item() > 1.2:
+                        lambda_gp_run = max(lambda_gp_run * 0.95, config.Gan.Dynamics.LAMBDA_GP_MIN)
+                elif batch_idx % 20 == 0:
+                    log_sigma_mean = log_sigma.mean().item() if log_sigma is not None else 0.0
                     logger.info(
                         f"Epoch [{epoch+1}/{epochs}] | Batch [{batch_idx}/{len(train_loader)}] | "
-                        f"C_iters: {c_iters} | W_est:{w_est:.4f} | ||∇D||:{grad_norm:.3f} | GP:{gradient_penalty:.3f} | "
-                        f"lossC:{loss_C:.3f} | lossG_adv:{loss_G_adv:.3f} | lossG_recon:{loss_G_recon:.3f} | "
-                        f"lossG_ece:{loss_G_ece:.4f} | ratio:{ratio_value:.3f}"
+                        f"HETERO | lossG_nll:{loss_G_recon:.3f} | lossG_ece:{loss_G_ece:.4f} | log_sigma_mean:{log_sigma_mean:.4f}"
                     )
-
-                # --- GAN Stability Check (Auto-stopping) ---
-                if total_steps > rules['warmup_steps'] and total_steps % rules['check_interval'] == 0:
-                    window = rules['moving_avg_window']
-                    if len(metric_history['ratio']) >= window:
-                        avg_ratio = np.mean(metric_history['ratio'][-window:])
-                        avg_grad_norm = np.mean(metric_history['grad_norm'][-window:])
-
-                        # Check Warning Conditions
-                        if not (rules['warnings']['ratio_range'][0] <= avg_ratio <= rules['warnings']['ratio_range'][1]):
-                            logger.warning(f"[Auto-stop] Warning: Moving avg of ratio ({avg_ratio:.3f}) is outside the warning range {rules['warnings']['ratio_range']}.")
-                        if not (rules['warnings']['grad_norm_range'][0] <= avg_grad_norm <= rules['warnings']['grad_norm_range'][1]):
-                            logger.warning(f"[Auto-stop] Warning: Moving avg of grad_norm ({avg_grad_norm:.3f}) is outside the warning range {rules['warnings']['grad_norm_range']}.")
-
-                        # Check Strong Stop Conditions
-                        if avg_ratio < rules['strong_stop']['ratio_lower_bound']:
-                            strong_stop_counters['ratio_sustained'] += rules['check_interval']
-                        else:
-                            strong_stop_counters['ratio_sustained'] = 0
-                        
-                        if not (rules['strong_stop']['grad_norm_range'][0] <= avg_grad_norm <= rules['strong_stop']['grad_norm_range'][1]):
-                            strong_stop_counters['grad_norm_sustained'] += rules['check_interval']
-                        else:
-                            strong_stop_counters['grad_norm_sustained'] = 0
-
-                        # Trigger Stop if Necessary
-                        if strong_stop_counters['ratio_sustained'] >= rules['strong_stop']['sustained_steps']:
-                            logger.error(f"[Auto-stop] STOP: GAN ratio has been below {rules['strong_stop']['ratio_lower_bound']} for {strong_stop_counters['ratio_sustained']} steps. Stopping training.")
-                            stop_training_flag = True
-                        
-                        if strong_stop_counters['grad_norm_sustained'] >= rules['strong_stop']['sustained_steps']:
-                            logger.error(f"[Auto-stop] STOP: Grad norm has been outside {rules['strong_stop']['grad_norm_range']} for {strong_stop_counters['grad_norm_sustained']} steps. Stopping training.")
-                            stop_training_flag = True
-
-                # Dynamic balancing for reconstruction weight
-                adv_abs = loss_G_adv.abs().item()
-                recon_val = loss_G_recon.abs().item() + 1e-9
-                current_ratio = adv_abs / recon_val
-                if current_ratio < target_adv_ratio * 0.5:
-                    lambda_recon_run = max(lambda_recon_min, lambda_recon_run * 0.9)
-                elif current_ratio > target_adv_ratio * 1.5:
-                    lambda_recon_run = min(lambda_recon_max, lambda_recon_run * 1.1)
-
-                # Light gradient penalty adjustment based on critic grad norm
-                if grad_norm.item() < 0.8:
-                    lambda_gp_run = min(lambda_gp_run * 1.05, config.Gan.Dynamics.LAMBDA_GP_MAX)
-                elif grad_norm.item() > 1.2:
-                    lambda_gp_run = max(lambda_gp_run * 0.95, config.Gan.Dynamics.LAMBDA_GP_MIN)
 
             if stop_training_flag:
                 logger.warning(f"Epoch [{epoch+1}/{epochs}] | Stopping early due to instability.")
                 break
 
-            logger.info(
-                f"Epoch [{epoch+1}/{epochs}] | Dynamic weights -> lambda_recon:{lambda_recon_run:.3f}, lambda_gp:{lambda_gp_run:.3f}, lambda_ece:{lambda_ece:.3f}"
-            )
+            if decoder_mode == "gan":
+                logger.info(
+                    f"Epoch [{epoch+1}/{epochs}] | Dynamic weights -> lambda_recon:{lambda_recon_run:.3f}, lambda_gp:{lambda_gp_run:.3f}, lambda_ece:{lambda_ece:.3f}"
+                )
 
             generator.eval()
             val_recon_loss = 0.0
             with torch.no_grad():
                 for batch_X, batch_y in val_loader:
                     batch_X, batch_y = batch_X.to(config.Device.DEVICE), batch_y.to(config.Device.DEVICE)
-                    outputs = generator(batch_X)
-                    loss = recon_criterion(outputs, batch_y)
+                    if decoder_mode == "cvae":
+                        outputs = generator(batch_X)  # prior sampling, no y -- true inference behavior
+                        loss = recon_criterion(outputs, batch_y)
+                    else:
+                        outputs = generator(batch_X)
+                        loss = recon_criterion(outputs, batch_y)
                     val_recon_loss += loss.item()
             val_recon_loss /= len(val_loader)
 
@@ -698,7 +908,8 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
             
             # Step LR Schedulers
             scheduler_G.step()
-            scheduler_C.step()
+            if scheduler_C is not None:
+                scheduler_C.step()
 
             if val_recon_loss < best_val_recon_loss:
                 best_val_recon_loss = val_recon_loss
@@ -712,17 +923,30 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
                     metadata_path = os.path.join("models", "model_metadata.json")
                     try:
                         from datetime import datetime as dt
+                        feature_columns = list(getattr(config.Data, "FEATURE_COLUMNS", []) or [])
                         if os.path.exists(metadata_path):
                             with open(metadata_path, 'r') as f:
                                 metadata = json.load(f)
                         else:
-                            metadata = {"version": "1.0", "models": {}}
+                            metadata = {"version": "2.0", "models": {}}
+                        metadata["version"] = "2.0"
                         
                         metadata["models"][f"model_{model_id}"] = {
                             "created_at": dt.now().isoformat(),
                             "val_loss": round(val_recon_loss, 6),
                             "epochs": epochs,
                             "is_finetune": is_finetuning,
+                            "input_dim": int(X_train.shape[-1]),
+                            "output_dim": int(y_train.shape[-1]),
+                            "future_window_size": int(getattr(config.Data, "FUTURE_WINDOW_SIZE", y_train.shape[-1]) or y_train.shape[-1]),
+                            "feature_count": len(feature_columns),
+                            "feature_columns": feature_columns,
+                            "context_dim": int(getattr(config.Data, "CONTEXT_DIM", 0) or 0),
+                            "decoder_mode": str(getattr(config.Gan, "DECODER_MODE", "gan") or "gan"),
+                            "pe_mode": str(getattr(config.Gan, "PE_MODE", "cycle_pe") or "cycle_pe"),
+                            "strip_context_from_main_input": bool(
+                                getattr(config.Gan, "STRIP_CONTEXT_FROM_MAIN_INPUT", False)
+                            ),
                             "hyperparams": {
                                 "d_model": d_model,
                                 "n_layers": n_layers,
@@ -741,7 +965,24 @@ def run(markets: list = None, tune: bool = False, epochs: int = None):
                 except Exception as e:
                     logger.error(f"CRITICAL: Failed to save model {model_id} to {abs_path}. Error: {e}", exc_info=True)
 
-        # Restore original CNN_MODE after this model finishes
+        # --- Holdout evaluation (out-of-sample, chronologically last 20% of val) ---
+        if len(X_holdout_model) > 0:
+            try:
+                generator.eval()
+                with torch.no_grad():
+                    X_holdout_tensor = torch.FloatTensor(X_holdout_model).to(config.Device.DEVICE)
+                    y_holdout_tensor = torch.FloatTensor(y_holdout).to(config.Device.DEVICE)
+                    holdout_pred = generator(X_holdout_tensor)
+                    holdout_loss = recon_criterion(holdout_pred, y_holdout_tensor).item()
+                logger.info(
+                    f"[HOLDOUT] Model {model_id} | Holdout Loss: {holdout_loss:.6f} "
+                    f"| Val Loss (best): {best_val_recon_loss:.6f} "
+                    f"| Generalization gap: {holdout_loss - best_val_recon_loss:+.6f}"
+                )
+            except Exception as holdout_e:
+                logger.warning(f"[HOLDOUT] Model {model_id} | Holdout evaluation failed: {holdout_e}")
+
+        # Restore original CNN_MODE after this model finishes (always, even on exception)
         config.Gan.CNN_MODE = original_cnn_mode
         logger.info(f"Finished training model {model_id} ({model_name}). Best validation reconstruction loss: {best_val_recon_loss:.6f}")
 

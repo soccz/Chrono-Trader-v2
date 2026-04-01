@@ -1,8 +1,14 @@
 import requests
 from datetime import datetime
 import hashlib
+import json
 import os
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover
+    def load_dotenv(*args, **kwargs):
+        return False
 
 load_dotenv()
 
@@ -17,6 +23,7 @@ except Exception:  # pragma: no cover
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 HISTORY_FILE = "logs/telegram_history.log"
+SIGNAL_STATE_FILE = "logs/telegram_signal_state.json"
 TUNNEL_URL_FILE = "tunnel_url.txt"
 
 def _now_report_tz() -> datetime:
@@ -45,7 +52,8 @@ def get_dashboard_url():
                     return url
     except Exception as e:
         print(f"Failed to read tunnel URL: {e}")
-    return "http://localhost:5001"  # fallback for local access
+    port = os.getenv("AETHER_WEB_PORT", "5001")
+    return f"http://localhost:{port}"  # fallback for local access
 
 def _is_duplicate(message):
     """Checks if the message hash matches the last sent message."""
@@ -75,6 +83,76 @@ def _save_message_hash(message):
             f.write(msg_hash)
     except Exception as e:
         print(f"Failed to save message hash: {e}")
+
+
+def _load_signal_state(path=SIGNAL_STATE_FILE):
+    try:
+        if not os.path.exists(path):
+            return {}
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def _save_signal_state(state, path=SIGNAL_STATE_FILE):
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(state or {}, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Failed to save signal state: {e}")
+
+
+def _signal_cap_for_channel(channel: str) -> int:
+    key = str(channel or "").strip().lower()
+    if key == "intraday":
+        return max(0, int(getattr(config.Recommender, "TELEGRAM_ALERT_CAP_INTRADAY_PER_DAY", 2)))
+    if key == "morning":
+        return max(0, int(getattr(config.Recommender, "TELEGRAM_ALERT_CAP_MORNING_PER_DAY", 1)))
+    return 0
+
+
+def _current_report_date_str() -> str:
+    return _now_report_tz().strftime("%Y-%m-%d")
+
+
+def _round_price_for_signal(value):
+    try:
+        value = float(value or 0.0)
+    except Exception:
+        return 0
+    if value <= 0:
+        return 0
+    if value >= 100000:
+        return int(round(value / 100.0) * 100)
+    if value >= 1000:
+        return int(round(value / 10.0) * 10)
+    return int(round(value))
+
+
+def _format_price_display(value) -> str:
+    try:
+        value = float(value or 0.0)
+    except Exception:
+        return "0"
+    if value <= 0:
+        return "0"
+    def _trim(text: str) -> str:
+        if "." not in text:
+            return text
+        return text.rstrip("0").rstrip(".")
+    if value >= 100000:
+        return f"{value:,.0f}"
+    if value >= 1000:
+        return _trim(f"{value:,.1f}")
+    if value >= 100:
+        return _trim(f"{value:,.1f}")
+    if value >= 10:
+        return _trim(f"{value:,.2f}")
+    if value >= 1:
+        return _trim(f"{value:,.3f}")
+    return _trim(f"{value:,.4f}")
 
 def send_alert(message, parse_mode='HTML', bypass_dedup=False):
     """
@@ -181,34 +259,16 @@ def format_daily_report(trending_recs, pattern_recs, pump_recs, meta=None):
     """
     now_dt = _now_report_tz()
     date_str = now_dt.strftime("%Y-%m-%d | %H:%M") + _tz_suffix(now_dt)
-    
-    msg = f"<b>✨ AETHER QUANT PREMIUM</b>\n"
-    msg += f"<code>{date_str}</code>\n\n"
 
-    # Summary block (based on any rec list)
-    msg += _format_run_summary((trending_recs or []) + (pattern_recs or []), meta=meta)
-    
-    # 1. Trending Section
-    msg += "<b>📈 TRENDING STRATEGY</b>\n"
-    msg += "━━━━━━━━━━━━━━━━━━\n"
-    msg += _format_section(trending_recs)
-    
-    # 2. Pattern Section
-    msg += "<b>🧬 PATTERN MATCHING</b>\n"
-    msg += "━━━━━━━━━━━━━━━━━━\n"
-    msg += _format_section(pattern_recs)
-    
-    # 3. Pump Section
-    if pump_recs:
-        msg += "<b>🚀 PUMP RADAR (URGENT)</b>\n"
-        msg += "━━━━━━━━━━━━━━━━━━\n"
-        for p in pump_recs:
-             market = p.get('market')
-             curr = p.get('current_price', 0)
-             prob = p.get('total_pump_prob', 0) * 100
-             msg += f"⚠️ <b>{market}</b>\n"
-             msg += f"   🔥 Prob: <b>{prob:.1f}%</b> | Price: {curr:,.0f} KRW\n\n"
-    
+    trend_block = _format_signal_focus_section(trending_recs or [], "📈 TREND SIGNALS")
+    pattern_block = _format_signal_focus_section(pattern_recs or [], "🧬 PATTERN SIGNALS")
+
+    msg = f"<b>✨ AETHER DAILY SIGNALS</b>\n"
+    msg += f"<code>{date_str}</code>\n\n"
+    msg += trend_block
+    msg += pattern_block
+    if not (trend_block or pattern_block):
+        msg += "No actionable entries.\n\n"
     msg += f"\n<a href='{get_dashboard_url()}'>📊 Access Dashboard</a>"
     return msg
 
@@ -254,6 +314,100 @@ def _format_section(items):
         text += "\n"
     return text
 
+
+def _is_actionable_signal(item) -> bool:
+    status = str((item or {}).get("status", "") or "")
+    if status.startswith("Watch"):
+        return False
+    return status.startswith("Recommended") or status.startswith("Forced")
+
+
+def _price_distribution(item):
+    current_price = float(item.get("current_price", 0) or 0)
+    expected_return = float(item.get("expected_return", 0) or 0)
+    pi_low_80 = float(item.get("pi_low_80", expected_return) or expected_return)
+    pi_high_80 = float(item.get("pi_high_80", expected_return) or expected_return)
+
+    center_price = current_price * (1.0 + expected_return) if current_price > 0 else 0.0
+    low_price = current_price * (1.0 + pi_low_80) if current_price > 0 else 0.0
+    high_price = current_price * (1.0 + pi_high_80) if current_price > 0 else 0.0
+    return current_price, center_price, low_price, high_price
+
+
+def build_signal_fingerprint(items, channel: str):
+    entries = []
+    for item in (items or []):
+        current_price, center_price, low_price, high_price = _price_distribution(item)
+        entries.append({
+            "market": str(item.get("market") or ""),
+            "signal": str(item.get("signal") or ""),
+            "strategy": str(item.get("strategy") or ""),
+            "entry": _round_price_for_signal(current_price),
+            "target": _round_price_for_signal(center_price),
+            "low": _round_price_for_signal(low_price),
+            "high": _round_price_for_signal(high_price),
+        })
+    entries.sort(key=lambda x: (x["market"], x["signal"], x["strategy"], x["entry"], x["target"], x["low"], x["high"]))
+    payload = {
+        "channel": str(channel or ""),
+        "entries": entries,
+    }
+    return hashlib.md5(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def should_send_signal_alert(channel: str, items, path: str = SIGNAL_STATE_FILE) -> bool:
+    state = _load_signal_state(path=path)
+    key = str(channel or "default")
+    fingerprint = build_signal_fingerprint(items, channel=key)
+    channel_state = (state or {}).get(key) or {}
+    previous = channel_state.get("fingerprint")
+    if previous == fingerprint:
+        return False
+    today = _current_report_date_str()
+    daily_cap = _signal_cap_for_channel(key)
+    day_state = channel_state.get("day") or {}
+    sent_date = str(day_state.get("date") or "")
+    sent_count = int(day_state.get("count") or 0) if sent_date == today else 0
+    if daily_cap > 0 and sent_count >= daily_cap:
+        return False
+    state[key] = {
+        "fingerprint": fingerprint,
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+        "items_n": len(items or []),
+        "day": {
+            "date": today,
+            "count": sent_count + 1,
+            "cap": daily_cap,
+        },
+    }
+    _save_signal_state(state, path=path)
+    return True
+
+
+def _format_signal_focus_section(items, title: str):
+    actionable = [item for item in (items or []) if _is_actionable_signal(item)]
+    if not actionable:
+        return ""
+
+    lines = [f"<b>{title}</b>", "━━━━━━━━━━━━━━━━━━"]
+    for idx, item in enumerate(actionable, 1):
+        market = str(item.get("market") or "UNKNOWN")
+        signal = str(item.get("signal") or "Neutral")
+        strategy = str(item.get("strategy") or "").strip()
+        current_price, center_price, low_price, high_price = _price_distribution(item)
+        strategy_tag = f" | {strategy}" if strategy else ""
+        lines.append(f"<b>{idx}. {market} | {signal}{strategy_tag}</b>")
+        if current_price > 0:
+            lines.append(f"<code>entry {_format_price_display(current_price)}</code>")
+        if center_price > 0:
+            lines.append(f"<code>target {_format_price_display(center_price)}</code>")
+        if low_price > 0 and high_price > 0:
+            lines.append(
+                f"<code>range {_format_price_display(low_price)} ~ {_format_price_display(high_price)}</code>"
+            )
+        lines.append("")
+    return "\n".join(lines).strip() + "\n\n"
+
 def format_short_term_report(scalp_recs, pump_recs, meta=None):
     """
     Generates a premium HTML report for 4H Scalping.
@@ -261,28 +415,10 @@ def format_short_term_report(scalp_recs, pump_recs, meta=None):
     now_dt = _now_report_tz()
     date_str = now_dt.strftime("%m-%d %H:%M") + _tz_suffix(now_dt)
     
-    msg = f"<b>⚡ AETHER SCALP (4H)</b>\n"
+    actionable = [item for item in (scalp_recs or []) if _is_actionable_signal(item)]
+    msg = f"<b>⚡ AETHER INTRADAY</b>\n"
     msg += f"<code>{date_str}</code>\n\n"
-
-    msg += _format_run_summary(scalp_recs or [], meta=meta)
-    
-    # Scalping Section
-    if scalp_recs:
-        msg += "<b>⏱ SHORT-TERM SIGNALS</b>\n"
-        msg += "━━━━━━━━━━━━━━━━━━\n"
-        msg += _format_section(scalp_recs)
-    else:
-        msg += "<b>⏱ SHORT-TERM SIGNALS</b>\n"
-        msg += "No actionable signals.\n\n"
-
-    # Pump Section
-    if pump_recs:
-        msg += "<b>🚀 PUMP ALERT</b>\n"
-        for p in pump_recs:
-             market = p.get('market')
-             prob = p.get('total_pump_prob', 0) * 100
-             msg += f"⚠️ <b>{market}</b> (Prob: {prob:.1f}%)\n"
-        msg += "\n"
+    msg += _format_signal_focus_section(actionable, "⏱ TODAY'S ENTRIES") or "No actionable entries.\n\n"
 
     msg += f"<a href='{get_dashboard_url()}'>📊 Dashboard</a>"
     return msg

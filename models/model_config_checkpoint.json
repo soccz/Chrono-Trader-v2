@@ -1,0 +1,18 @@
+{
+  "best_value": 0.5831951040984246,
+  "best_params": {
+    "lr_g": 0.0005971783139342485,
+    "lr_c": 0.0005181008400500892,
+    "d_model": 128,
+    "n_layers": 4,
+    "n_heads": 8,
+    "batch_size": 32,
+    "lambda_recon_initial": 2.917088390739919,
+    "lambda_gp_initial": 5.955389271172664,
+    "lambda_ece": 0.4035211337692972,
+    "critic_base_iters": 7,
+    "dropout_p": 0.17260833688322438,
+    "lambda_direction": 0.9952015123575392
+  },
+  "n_trials": 100
+}

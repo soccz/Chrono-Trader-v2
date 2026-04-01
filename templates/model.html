@@ -1,0 +1,312 @@
+{% extends "base.html" %}
+
+{% block title %}Model Blueprint - Chrono-Trader{% endblock %}
+
+{% block extra_head %}
+<!-- Unified Design: Using standard tokens, control styles, and model blueprint theme -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/design-tokens.css') }}?v=1.1">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/control.css') }}?v=1.5">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/model.css') }}?v=2.2">
+{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12 control-header">
+        <div>
+            <h1 class="page-title">Model Blueprint</h1>
+            <div class="page-subtitle">Hybrid Transformer-GAN Architecture & Specifications</div>
+        </div>
+        <div class="status-indicator active">
+            <span class="spinner-grow spinner-grow-sm text-primary" role="status"></span>
+            <span class="font-monospace">SYSTEM: ONLINE</span>
+        </div>
+    </div>
+</div>
+
+<div class="container-fluid p-0">
+
+    <!-- 1. ENSEMBLE OVERVIEW (New) -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 class="section-title mb-0">앙상블 신경망 (5개 모델 가동 중)</h6>
+                <div class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill px-3">
+                    <i class="bi bi-activity me-1"></i> 실시간 추론 중
+                </div>
+            </div>
+
+            <!-- Dynamic Ensemble Grid -->
+            <div class="ensemble-grid" id="ensemble-grid">
+                <!-- Cards will be injected by JS -->
+                <div class="text-center w-100 py-4 text-secondary">
+                    <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                    앙상블 상태 로딩 중...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. NEURAL STATE MONITOR (Compact & Centered) -->
+    <div class="row mb-5 justify-content-center">
+        <div class="col-12 col-lg-8">
+            <div class="toss-card text-center">
+                <div class="d-flex justify-content-center align-items-center mb-3">
+                    <h6 class="fw-bold mb-0 text-white"><i class="bi bi-cpu-fill me-2 text-warning"></i>내부 상태 모니터
+                        (Internal State)</h6>
+                    <span class="badge bg-dark border border-secondary text-secondary ms-3">실시간 게이트 값</span>
+                </div>
+
+                <div class="row justify-content-center">
+                    <!-- Gate Meter (Centered) -->
+                    <div class="col-10 col-md-8">
+                        <div class="d-flex align-items-center justify-content-between px-2 mb-1">
+                            <span class="text-info fw-bold small">패턴 (CNN)</span>
+                            <span class="text-secondary small">아키텍처 균형</span>
+                            <span class="text-warning fw-bold small">추세 (Transf)</span>
+                        </div>
+                        <div class="progress bg-dark border border-secondary" style="height: 16px;">
+                            <div class="progress-bar bg-info" role="progressbar" style="width: 50%" id="gate-bar-cnn">
+                            </div>
+                            <div class="progress-bar bg-warning" role="progressbar" style="width: 50%"
+                                id="gate-bar-trans"></div>
+                        </div>
+                        <div class="text-center mt-3">
+                            <span class="badge bg-dark border border-secondary p-2 px-3" id="gate-value-display"
+                                style="font-size: 1rem;">하이브리드: 0.50</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. ARCHITECTURE BLUEPRINT (Existing - Renamed) -->
+    <div class="row mb-5">
+        <div class="col-12">
+            <!-- 1. Enhanced Architecture Visualizer -->
+            <div class="blueprint-container state-active">
+                <div class="blueprint-grid-overlay"></div>
+                <div class="blueprint-content">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="text-white fw-bold m-0"><i class="bi bi-diagram-3 me-2 text-primary"></i>라이브 아키텍처 뷰
+                            (Live Architecture)</h5>
+                        <div class="badge bg-dark border border-secondary text-secondary">Rendered by Mermaid.js v10.9
+                        </div>
+                    </div>
+
+                    <div class="arch-visualizer" role="img" aria-label="하이브리드 Transformer-GAN 아키텍처 다이어그램">
+                        <div class="mermaid">
+                            %%{init: {'theme': 'dark', 'themeVariables': { 'primaryColor': '#1e3a8a',
+                            'edgeLabelBackground':'#161b22', 'tertiaryColor': '#161b22', 'fontFamily': 'JetBrains Mono',
+                            'fontSize': '16px', 'lineColor': '#475569'}}}%%
+                            graph LR
+
+                            subgraph Data [DATA INPUT]
+                            Input[("Market Data<br />(B, 168, F)")] -->|정규화| Norm[StandardScaler]
+                            Norm -->|시간 임베딩| Emb[Temporal Embedding]
+                            Norm -->|차원 변경| Perm[Permute]
+                            end
+
+                            subgraph Global [GLOBAL PATH - Transformer]
+                            Emb --> MHSA["Multi-Head Attn<br />(8 Heads)"]
+                            MHSA --> AddNorm1(("Add & Norm"))
+                            AddNorm1 --> FFN[Feed Forward]
+                            FFN --> AddNorm2(("Add & Norm"))
+                            AddNorm2 -->|Context Vector| TransOut[Transformer Features]
+                            end
+
+                            subgraph Local [LOCAL PATH - 1D CNN]
+                            Perm --> TCN1[Conv1D]
+                            TCN1 --> TCN2[Conv1D]
+                            TCN2 --> TCN3[Conv1D]
+                            TCN3 --> Pool[Adaptive AvgPool]
+                            Pool -->|Project| CNNOut[CNN Features]
+                            end
+
+                            subgraph Fusion [EXPLAINABLE GATED FUSION]
+                            TransOut --> MatchTrans{Pattern Match}
+                            CNNOut --> MatchCNN{Pattern Match}
+
+                            Bank[("Prototype Bank<br />(N=16)")] -.-> MatchTrans
+                            Bank -.-> MatchCNN
+
+                            MatchTrans -->|유사도 점수| Gate
+                            MatchCNN -->|유사도 점수| Gate
+
+                            Gate((Gate<br />Sigmoid)) --> Mix[Weighted Sum]
+                            TransOut --> Mix
+                            CNNOut --> Mix
+                            end
+
+                            subgraph Gen [GAN GENERATOR]
+                            Noise(("Gaussian<br />Noise")) --> Concat{Concat}
+                            Mix --> Concat
+                            Concat --> LSTM[LSTM Decoder]
+                            LSTM --> Dense[Dense Layer]
+                            Dense --> Out[("Prediction")]
+                            end
+
+                            style Input fill:#1e293b,stroke:#94a3b8,color:#fff
+                            style Out fill:#064e3b,stroke:#34d399,color:#fff
+                            style MHSA fill:#1d4ed8,stroke:#60a5fa,color:#fff
+                            style TCN1 fill:#7e22ce,stroke:#d8b4fe,color:#fff
+                            style TCN2 fill:#7e22ce,stroke:#d8b4fe,color:#fff
+                            style TCN3 fill:#7e22ce,stroke:#d8b4fe,color:#fff
+                            style Bank fill:#b45309,stroke:#fbbf24,color:#fff
+                            style Gate fill:#991b1b,stroke:#f87171
+                            style MHSA fill:#1d4ed8,stroke:#60a5fa,color:#fff
+                            style TCN1 fill:#7e22ce,stroke:#d8b4fe,color:#fff
+                            style TCN2 fill:#7e22ce,stroke:#d8b4fe,color:#fff
+                            style TCN3 fill:#7e22ce,stroke:#d8b4fe,color:#fff
+                            style Bank fill:#b45309,stroke:#fbbf24,color:#fff
+                            style Gate fill:#991b1b,stroke:#f87171
+                        </div>
+                    </div>
+
+                    <div class="blueprint-caption">
+                        * v2.1.0 하이브리드 아키텍처의 실제 구조입니다. (Transformer + 1D CNN + Prototype Gating)
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SPECS ROW 1 -->
+    <div class="row mb-5">
+        <div class="col-12">
+            <h6 class="section-title">모델 구조 설정 (Structural Configuration)</h6>
+            <div class="spec-card-grid">
+
+                <!-- Spec Card 1 -->
+                <div class="spec-card">
+                    <div class="spec-title"><i class="bi bi-clock-history"></i> 시퀀스 길이 (Input)</div>
+                    <div class="spec-value">168 시간 (1주일)</div>
+                    <div class="spec-desc">
+                        1주일치 데이터를 한 번에 입력받아, 주간 계절성과 장기적인 모멘텀 패턴을 빠짐없이 학습합니다.
+                    </div>
+                </div>
+
+                <!-- Spec Card 2 -->
+                <div class="spec-card">
+                    <div class="spec-title"><i class="bi bi-cpu"></i> 트랜스포머 상세</div>
+                    <div class="spec-value">8 Heads / 3 Layers</div>
+                    <div class="spec-desc">
+                        8개의 어텐션 헤드가 각각 거래량, 가격, 변동성 등 서로 다른 시장의 특징을 병렬적으로 분석합니다.
+                    </div>
+                </div>
+
+                <!-- Spec Card 3 -->
+                <div class="spec-card">
+                    <div class="spec-title"><i class="bi bi-diagram-2"></i> 퓨전 로직 (Fusion)</div>
+                    <div class="spec-value">프로토타입 게이팅</div>
+                    <div class="spec-desc">
+                        현재 상황을 과거의 '성공했던 패턴(Prototype)'과 대조하여, 추세와 패턴 중 더 신뢰할 수 있는 정보를 선택적으로 반영합니다.
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- SPECS ROW 2 -->
+    <div class="row mb-5">
+        <div class="col-12">
+            <h6 class="section-title">하이퍼파라미터 및 최적화</h6>
+            <div class="spec-card-grid">
+
+                <!-- Spec Card 4 -->
+                <div class="spec-card">
+                    <div class="spec-title"><i class="bi bi-lightning-charge"></i> 학습률 (Learning Rate)</div>
+                    <div class="spec-value">G: 1e-4 / D: 2e-4</div>
+                    <div class="spec-desc">
+                        TTUR 기법을 적용하여 판별자(Discriminator)가 더 빠르게 학습되도록 유도, 생성자가 더 정교한 예측을 하도록 돕습니다.
+                    </div>
+                </div>
+
+                <!-- Spec Card 5 -->
+                <div class="spec-card">
+                    <div class="spec-title"><i class="bi bi-box-seam"></i> 배치 처리 (Batch)</div>
+                    <div class="spec-value">64 (Contextual)</div>
+                    <div class="spec-desc">
+                        시장 지수(Market Index)와 과거 유사도 데이터를 컨텍스트로 함께 주입하여 학습 효율을 극대화했습니다.
+                    </div>
+                </div>
+
+                <!-- Spec Card 6 -->
+                <div class="spec-card">
+                    <div class="spec-title"><i class="bi bi-exclude"></i> 드롭아웃 (Dropout)</div>
+                    <div class="spec-value">P=0.1 / Dim=32</div>
+                    <div class="spec-desc">
+                        약간의 노이즈와 드롭아웃을 적용하여, 특정 패턴에 과하게 의존하는 과적합(Overfitting)을 방지합니다.
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- BOTTOM ROW: JSON SPEC -->
+    <h6 class="text-secondary fw-bold small mb-3 border-bottom border-secondary border-opacity-25 pb-2">LIVE API
+        SPECIFICATION</h6>
+    <div class="json-container">
+        <div class="json-viewer">
+            <pre class="m-0" id="json-preview">
+<span class="json-key">"model_config"</span>: {
+  <span class="json-key">"architecture"</span>: <span class="json-string">"Hybrid-Transformer-GAN"</span>,
+  <span class="json-key">"version"</span>: <span class="json-string">"v2.1.0-stable"</span>,
+  <span class="json-key">"components"</span>: {
+    <span class="json-key">"encoder"</span>: <span class="json-string">"Multi-Head Self-Attention (MHSA)"</span>,
+    <span class="json-key">"decoder"</span>: <span class="json-string">"LSTM-GAN Generator"</span>
+  }
+},
+<span class="json-key">"deployment"</span>: {
+  <span class="json-key">"precision"</span>: <span class="json-string">"float32"</span>,
+  <span class="json-key">"device"</span>: <span class="json-string">"cuda:0"</span>,
+  <span class="json-key">"inference_time"</span>: <span class="json-string">"~45ms"</span>
+}</pre>
+        </div>
+    </div>
+</div>
+</div>
+
+</div>
+
+<!-- Hidden Log for JS -->
+<div id="terminal-log" style="display:none;"></div>
+{% endblock %}
+
+{% block extra_scripts %}
+<!-- Mermaid JS (ESM) -->
+<script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.esm.min.mjs';
+
+    // Initialize immediately
+    mermaid.initialize({
+        startOnLoad: true,
+        theme: 'dark',
+        securityLevel: 'loose',
+        fontFamily: 'JetBrains Mono', // Specific tech font
+        themeVariables: {
+            primaryColor: '#1e3a8a',
+            edgeLabelBackground: '#161b22',
+            tertiaryColor: '#161b22',
+            lineColor: '#475569'
+        }
+    });
+
+    window.mermaid = mermaid;
+    console.log("Mermaid Initialized via Module");
+
+    // Trigger PanZoom check (defined in model.js)
+    if (window.enablePanZoom) {
+        setTimeout(window.enablePanZoom, 1000);
+    }
+</script>
+
+<!-- SVG Pan Zoom with SRI -->
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"
+    integrity="sha384-3N+QDLxkFvU4BO68rxR+tBQ3x8y4ITg8Nv/t+r5XB30f7CzN2S5v9O8lDT3jCk4I"
+    crossorigin="anonymous"></script>
+
+<script src="{{ url_for('static', filename='js/model.js') }}?v=2.1"></script>
+{% endblock %}

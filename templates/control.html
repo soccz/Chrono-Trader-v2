@@ -1,0 +1,280 @@
+{% extends "base.html" %}
+
+{% block title %}Control Panel - Chrono-Trader{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/control.css') }}?v=1.5">
+{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12 control-header">
+        <div>
+            <h1 class="page-title" data-i18n="control.title">AI Control Center</h1>
+            <p class="page-subtitle">Manage models, pipelines, and system health.</p>
+        </div>
+
+        <!-- Master Status Badge -->
+        <div class="status-indicator active" id="system-status-indicator">
+            <span class="spinner-grow spinner-grow-sm text-primary" role="status" aria-hidden="true"></span>
+            <span id="system-status-text">대기 중</span>
+        </div>
+    </div>
+    <div id="system-runtime-summary" class="small text-muted px-2 mt-2">runtime=syncing</div>
+</div>
+<div id="ops-overview-summary" class="small text-muted px-2 mt-1">ops=syncing</div>
+
+<div class="control-grid">
+    <!-- Left Column: Navigation & Quick Actions -->
+    <div class="d-flex flex-column gap-3">
+
+        <!-- System Monitor Widget -->
+        <div class="monitor-card">
+            <div class="metric-item">
+                <div class="metric-label">CPU</div>
+                <div class="metric-value" id="meter-val-cpu">--%</div>
+                <div class="metric-bar">
+                    <div class="metric-fill" id="meter-bar-cpu"></div>
+                </div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-label">RAM</div>
+                <div class="metric-value" id="meter-val-mem">--%</div>
+                <div class="metric-bar">
+                    <div class="metric-fill" id="meter-bar-mem"></div>
+                </div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-label">GPU</div>
+                <div class="metric-value text-muted">N/A</div>
+            </div>
+        </div>
+
+        <!-- Quick Actions Grid -->
+        <div class="row g-2">
+            <div class="col-6">
+                <div class="action-card" id="btn-quick-predict" role="button" tabindex="0" aria-label="빠른 예측 즉시 실행"
+                    onkeydown="if(event.key==='Enter') this.click()">
+                    <div class="action-icon"><i class="bi bi-lightning-fill" aria-hidden="true"></i></div>
+                    <div class="action-title">Quick Intraday</div>
+                    <div class="action-desc">ops 경로 실행</div>
+                </div>
+            </div>
+            <div class="col-6">
+                <div class="action-card" role="button" tabindex="0" onclick="location.reload()"
+                    onkeydown="if(event.key==='Enter') location.reload()">
+                    <div class="action-icon"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i></div>
+                    <div class="action-title">새로고침</div>
+                    <div class="action-desc">UI 갱신</div>
+                </div>
+            </div>
+            <div class="col-6">
+                <div class="action-card" id="btn-ops-intraday" role="button" tabindex="0" aria-label="인트라데이 운영 실행"
+                    onkeydown="if(event.key==='Enter') this.click()">
+                    <div class="action-icon"><i class="bi bi-clock-history" aria-hidden="true"></i></div>
+                    <div class="action-title">Ops Intraday</div>
+                    <div class="action-desc">수집+추론</div>
+                </div>
+            </div>
+            <div class="col-6">
+                <div class="action-card" id="btn-ops-morning" role="button" tabindex="0" aria-label="모닝 리포트 운영 실행"
+                    onkeydown="if(event.key==='Enter') this.click()">
+                    <div class="action-icon"><i class="bi bi-sunrise" aria-hidden="true"></i></div>
+                    <div class="action-title">Ops Morning</div>
+                    <div class="action-desc">리포트 실행</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Navigation Tabs -->
+        <div class="toss-card p-2">
+            <nav class="nav flex-column nav-pills" role="tablist" aria-label="컨트롤 탭">
+                <button class="nav-link nav-link-ct active text-start" data-tab="train" role="tab" aria-selected="true"
+                    aria-controls="tab-train">
+                    <i class="bi bi-cpu me-2" aria-hidden="true"></i> 모델 학습
+                </button>
+                <button class="nav-link nav-link-ct text-start" data-tab="daily" role="tab" aria-selected="false"
+                    aria-controls="tab-daily">
+                    <i class="bi bi-calendar-check me-2" aria-hidden="true"></i> 데일리 루틴
+                </button>
+                <button class="nav-link nav-link-ct text-start" data-tab="backtest" role="tab" aria-selected="false"
+                    aria-controls="tab-backtest">
+                    <i class="bi bi-graph-up-arrow me-2" aria-hidden="true"></i> 백테스트
+                </button>
+                <button class="nav-link nav-link-ct text-start" data-tab="ops" role="tab" aria-selected="false"
+                    aria-controls="tab-ops">
+                    <i class="bi bi-diagram-3 me-2" aria-hidden="true"></i> 운영 실행
+                </button>
+                <button class="nav-link nav-link-ct text-start text-danger" data-tab="danger" role="tab"
+                    aria-selected="false" aria-controls="tab-danger">
+                    <i class="bi bi-exclamation-triangle me-2" aria-hidden="true"></i> 위험 구역
+                </button>
+            </nav>
+        </div>
+    </div>
+
+    <!-- Right Column: Tab Content & Logs -->
+    <div class="d-flex flex-column gap-3">
+
+        <!-- Tab Content Area -->
+        <div class="toss-card">
+
+            <!-- Tab: Training -->
+            <div id="tab-train" class="tab-content">
+                <h5 class="mb-4"><i class="bi bi-cpu text-primary me-2"></i>모델 학습 설정</h5>
+                <div class="row align-items-end g-3">
+                    <div class="col-md-4">
+                        <label class="form-label text-secondary small">학습 횟수 (Epochs)</label>
+                        <input type="number" class="form-control" id="train-epochs" value="50" min="1">
+                    </div>
+                    <div class="col-md-4">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="train-tune">
+                            <label class="form-check-label" for="train-tune">하이퍼파라미터 튜닝</label>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <button class="btn btn-primary w-100" id="btn-train">
+                            <i class="bi bi-play-circle me-2"></i>학습 시작
+                        </button>
+                    </div>
+                </div>
+                <div class="mt-3 d-flex align-items-center gap-2">
+                    <span class="badge bg-secondary status-indicator" id="status-train">대기 중</span>
+                </div>
+            </div>
+
+            <!-- Tab: Daily -->
+            <div id="tab-daily" class="tab-content d-none">
+                <h5 class="mb-4"><i class="bi bi-calendar-check text-success me-2"></i>데일리 파이프라인</h5>
+                <div class="row align-items-end g-3">
+                    <div class="col-md-6">
+                        <label class="form-label text-secondary small">미세 조정 (Fine-tune Epochs)</label>
+                        <input type="number" class="form-control" id="daily-epochs" value="2" min="1" max="10">
+                    </div>
+                    <div class="col-md-6">
+                        <button class="btn btn-success w-100" id="btn-daily">
+                            <i class="bi bi-play-circle me-2"></i>데일리 실행
+                        </button>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <span class="badge bg-secondary status-indicator" id="status-daily">대기 중</span>
+                </div>
+            </div>
+
+            <!-- Tab: Backtest -->
+            <div id="tab-backtest" class="tab-content d-none">
+                <h5 class="mb-4"><i class="bi bi-graph-up-arrow text-info me-2"></i>백테스트 시뮬레이션</h5>
+                <div class="row align-items-end g-3">
+                    <div class="col-md-6">
+                        <label class="form-label text-secondary small">테스트 기간 (Days)</label>
+                        <input type="number" class="form-control" id="backtest-days" value="30" min="1">
+                    </div>
+                    <div class="col-md-6">
+                        <button class="btn btn-info w-100 text-white" id="btn-backtest">
+                            <i class="bi bi-play-circle me-2"></i>백테스트 실행
+                        </button>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <span class="badge bg-secondary status-indicator" id="status-backtest">대기 중</span>
+                </div>
+            </div>
+
+            <div id="tab-ops" class="tab-content d-none">
+                <h5 class="mb-4"><i class="bi bi-diagram-3 text-warning me-2"></i>운영 실행</h5>
+                <div class="row align-items-end g-3">
+                    <div class="col-md-4">
+                        <label class="form-label text-secondary small">잡 종류</label>
+                        <div class="d-flex gap-2">
+                            <select class="form-select" id="ops-job">
+                                <option value="intraday">intraday</option>
+                                <option value="morning-report">morning-report</option>
+                            </select>
+                            <button class="btn btn-outline-secondary" id="btn-ops-focus-primary" type="button">추천 잡</button>
+                        </div>
+                    </div>
+                    <div class="col-md-8">
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-outline-info flex-grow-1" id="btn-ops-preflight">
+                                <i class="bi bi-clipboard2-pulse me-2"></i>Preflight
+                            </button>
+                            <button class="btn btn-outline-warning flex-grow-1" id="btn-ops-plan">
+                                <i class="bi bi-eye me-2"></i>Dry Run
+                            </button>
+                            <button class="btn btn-outline-secondary flex-grow-1" id="btn-ops-backfill">
+                                <i class="bi bi-wrench-adjustable me-2"></i>Backfill
+                            </button>
+                            <button class="btn btn-warning text-dark flex-grow-1" id="btn-ops-run">
+                                <i class="bi bi-play-circle me-2"></i>Ops 실행
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <span class="badge bg-secondary status-indicator" id="status-ops">대기 중</span>
+                </div>
+                <div class="mt-3">
+                    <button class="btn btn-outline-light w-100" id="btn-ops-next-action">
+                        <i class="bi bi-magic me-2"></i>추천 액션 실행
+                    </button>
+                </div>
+                <div class="mt-3">
+                    <div class="small text-muted mb-2">Ops preflight</div>
+                    <div id="ops-preflight-output" class="small text-muted"
+                        style="background: var(--ct-bg-surface-elevated, rgba(255,255,255,0.04)); border-radius: 12px; padding: 12px;">Preflight summary will appear here.</div>
+                </div>
+                <div class="mt-3">
+                    <div class="small text-muted mb-2">Ops readiness</div>
+                    <div id="ops-readiness-output" class="small text-muted"
+                        style="background: var(--ct-bg-surface-elevated, rgba(255,255,255,0.04)); border-radius: 12px; padding: 12px;">Readiness matrix will appear here.</div>
+                </div>
+                <pre id="ops-plan-output" class="mt-3 p-3 rounded small text-muted"
+                    style="background: var(--ct-bg-surface-elevated, rgba(255,255,255,0.04)); min-height: 140px; white-space: pre-wrap;">Dry run plan will appear here.</pre>
+                <div class="mt-3">
+                    <div class="small text-muted mb-2">Recent ops runs</div>
+                    <div id="ops-history-output" class="small text-muted"
+                        style="background: rgba(255,255,255,0.04); border-radius: 12px; padding: 12px;">History syncing...</div>
+                </div>
+                <div class="mt-3">
+                    <div class="small text-muted mb-2">Ops audit trail</div>
+                    <div id="ops-audit-output" class="small text-muted"
+                        style="background: rgba(255,255,255,0.04); border-radius: 12px; padding: 12px;">Audit syncing...</div>
+                </div>
+            </div>
+
+            <!-- Tab: Danger Zone -->
+            <div id="tab-danger" class="tab-content d-none">
+                <h5 class="mb-4 text-danger"><i class="bi bi-exclamation-triangle me-2"></i>위험 구역</h5>
+                <p class="text-muted small">주의: 이 작업들은 돌이킬 수 없습니다.</p>
+
+                <div class="d-flex gap-3">
+                    <button class="btn btn-outline-danger" id="btn-reset-portfolio">
+                        <i class="bi bi-trash me-2"></i>포트폴리오 초기화
+                    </button>
+                    <button class="btn btn-outline-warning" onclick="alert('준비 중입니다.')">
+                        <i class="bi bi-arrow-counterclockwise me-2"></i>모델 롤백
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Logs Console -->
+        <div class="log-console-container flex-grow-1">
+            <div class="log-header">
+                <span class="text-muted small"><i class="bi bi-terminal me-2"></i>System Logs</span>
+                <button class="btn btn-sm btn-outline-secondary p-0 px-2" id="btn-clear-logs"
+                    style="font-size: 0.8em;">Clear</button>
+            </div>
+            <div id="log-console" class="log-content">
+                <div class="log-entry text-muted">System ready. Waiting for tasks...</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/control.js') }}?v=1.0"></script>
+{% endblock %}

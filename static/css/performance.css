@@ -1,0 +1,111 @@
+/* 
+ * Performance Dashboard Isolated Styles 
+ */
+
+body,
+.glass-panel,
+.toss-card {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Pretendard", sans-serif;
+}
+
+/* --- Typography --- */
+.page-title {
+    font-size: 2.2rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    background: linear-gradient(90deg, var(--ct-text-primary), var(--ct-primary));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    display: inline-block;
+    margin-bottom: 0;
+}
+
+.nums {
+    font-variant-numeric: tabular-nums;
+    font-family: 'Inter', sans-serif;
+    letter-spacing: -0.02em;
+}
+
+/* --- Layout --- */
+.dashboard-container {
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+/* --- Glass Panels --- */
+.glass-panel {
+    background: var(--ct-bg-surface, rgba(255, 255, 255, 0.06));
+    border: 1px solid var(--ct-border-color);
+    border-radius: var(--ct-radius-md);
+    backdrop-filter: blur(10px);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.glass-panel:hover {
+    transform: translateY(-2px);
+    border-color: var(--ct-primary);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+
+.toss-card-title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--ct-text-secondary);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+/* --- Toggle Switch (Premium) --- */
+.form-check-input {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    cursor: pointer;
+}
+
+.form-check-input:checked {
+    background-color: var(--ct-primary);
+    border-color: var(--ct-primary);
+}
+
+/* --- Badges --- */
+.badge {
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+/* --- Progress Bars --- */
+.progress {
+    background-color: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+/* --- Tables --- */
+.table {
+    margin-bottom: 0;
+    color: var(--ct-text-primary);
+}
+
+.table thead th {
+    font-weight: 600;
+    color: var(--ct-text-secondary);
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid var(--ct-border-color);
+    font-size: 0.85rem;
+    padding: 12px;
+}
+
+.table td {
+    border-bottom: 1px solid var(--ct-border-color);
+    padding: 12px;
+}
+
+.table-hover tbody tr:hover {
+    background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* --- Chart Containers --- */
+canvas {
+    width: 100% !important;
+    height: 100% !important;
+}

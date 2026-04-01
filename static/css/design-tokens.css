@@ -1,0 +1,77 @@
+/* 
+ * Chrono-Trader v2 Unified Design System
+ * 2026-01-22
+ */
+
+:root {
+    /* --- Modern Color Palette (2026 Trend) --- */
+
+    /* Primary Brand */
+    --ct-primary: #3182f6;
+    --ct-primary-hover: #1b64da;
+    --ct-primary-subtle: rgba(49, 130, 246, 0.1);
+
+    /* Accents */
+    --ct-success: #00d97e;
+    --ct-danger: #ff4d4d;
+    --ct-warning: #f1c40f;
+    --ct-info: #3498db;
+
+    /* --- Light Mode (Default) --- */
+    --ct-bg-main: #f2f4f6;
+    /* TOSS Gray */
+    --ct-bg-surface: #ffffff;
+    /* White Card */
+    --ct-bg-surface-elevated: #f8f9fa;
+
+    /* Text Colors (Light) */
+    --ct-text-primary: #191f28;
+    /* TOSS Black */
+    --ct-text-secondary: #8b95a1;
+    /* TOSS Gray text */
+    --ct-text-tertiary: #b0b8c1;
+    --ct-text-muted: #d1d6db;
+
+    /* Borders (Light) */
+    --ct-border-color: rgba(0, 0, 0, 0.08);
+    --ct-border-hover: rgba(0, 0, 0, 0.15);
+
+    /* Effects (Light) */
+    --ct-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.05);
+    --ct-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+    --ct-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
+    --ct-shadow-neon: 0 2px 8px rgba(49, 130, 246, 0.2);
+
+    /* Layout */
+    --ct-radius-sm: 8px;
+    --ct-radius-md: 16px;
+    --ct-radius-lg: 24px;
+    --ct-radius-pill: 9999px;
+    --ct-spacing-xs: 4px;
+    --ct-spacing-sm: 8px;
+    --ct-spacing-md: 16px;
+    --ct-spacing-lg: 24px;
+    --ct-spacing-xl: 32px;
+}
+
+/* --- Dark Mode Override --- */
+[data-theme="dark"] {
+    --ct-bg-main: #0a0a0c;
+    /* Deep Space Black */
+    --ct-bg-surface: #141416;
+    /* Card Background */
+    --ct-bg-surface-elevated: #1c1c1e;
+
+    --ct-text-primary: #ffffff;
+    --ct-text-secondary: #a0a0a2;
+    --ct-text-tertiary: #6b6b6d;
+    --ct-text-muted: #4a4a4c;
+
+    --ct-border-color: rgba(255, 255, 255, 0.08);
+    --ct-border-hover: rgba(255, 255, 255, 0.15);
+
+    --ct-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
+    --ct-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
+    --ct-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+    --ct-shadow-neon: 0 0 10px rgba(49, 130, 246, 0.4);
+}

@@ -1,8 +1,12 @@
 # AETHER (Chrono-Trader v2)
 
-Explainable, ops-oriented crypto forecasting and recommendation system.
+Probabilistic, ops-oriented crypto forecasting and recommendation system for live use.
 
-This README intentionally focuses on ideas, design logic, and research direction (paper-style). For operational usage details, see `USAGE_GUIDE.md` / `사용가이드.md`.
+This repository has two tracks:
+- repo root: the live crypto prediction, recommendation, dashboard, and ops system
+- `aaa/`: the paper-writing and research-packaging track
+
+This README is the root-system overview. It should describe the production-facing architecture first. For operational usage details, see `USAGE_GUIDE.md` / `사용가이드.md`.
 
 Not financial advice.
 
@@ -11,23 +15,28 @@ Not financial advice.
 Markets exhibit both trend-level structure and local motif repetition. In crypto, macro drift often appears first in leaders (e.g., BTC/ETH) and then propagates to followers, while idiosyncratic local patterns still dominate many moves.
 AETHER is built to represent these two forces simultaneously and to produce recommendations that are (a) uncertainty-aware and (b) operationally robust under degraded data/network conditions.
 
-Core idea: treat the problem as **pattern localization in time** ("where are we in a known historical motif?") while conditioning on **macro context** (BTC/ETH index), then route decisions through an **explainable hybrid model** and a strict recommendation funnel.
+Core idea:
+- model level: use an attention + TCN hybrid encoder to read both macro flow and local motifs
+- output level: generate a future return distribution rather than a point estimate
+- system level: turn that distribution into strategy-split operations for trend, pattern-follower, intraday, and morning runs
+- execution level: repo-root live ops target KRW spot, so `Short` stays informational/watch-only unless explicitly enabled
 
 ## 1. Introduction
 
 Most single-model approaches implicitly choose an inductive bias: either prioritize global dependencies (trend/regime) or focus on local motifs (shape-level patterns). In practice, crypto price action alternates: sometimes the macro tape dominates, and sometimes local microstructure motifs dominate.
 
-AETHER explicitly represents both views and exposes a routing variable (gate) to support debugging and iterative refinement. Separately, it treats operational failure modes (stale data, network loss, long-running tasks) as first-class constraints of the system.
+AETHER explicitly represents both views through an attention + TCN hybrid and exposes a routing variable (gate) to support debugging and iterative refinement. Separately, it treats operational failure modes (stale data, network loss, long-running tasks) as first-class constraints of the system.
 
 ## Problem Setting
 
-Given an hourly sequence window (168h) of engineered features for a market, predict a multi-step future return path (6h horizon) and produce a small set of ranked recommendations.
+Given an hourly sequence window (168h) of engineered features for a market, predict a multi-step future return path (**3h horizon**) and produce a small set of ranked recommendations.
 
 Design constraints:
 - Regimes change; features must capture both macro and micro structure.
 - Predictions must carry uncertainty, and filtering must respect it.
 - Scheduled runs must not hang, must enforce data freshness, and must degrade safely.
 - Each scheduled run must emit at least one output item (trade or watch-only), to keep automation consistent.
+- Training universe is dynamic (top-N by 24h volume) rather than a fixed coin list.
 
 ## Method Overview
 
@@ -37,10 +46,11 @@ High-level block diagram:
 Upbit/DB candles
   -> feature engineering (macro + factors + technicals)
   -> hybrid encoder: Transformer (global) + CNN (local)
-  -> explainable gated fusion
-  -> generator: multi-step return path (6h)
-  -> uncertainty estimation + staged recommendation funnel
-  -> ranked outputs (trade or watch-only)
+  -> explainable gated fusion + FiLM regime conditioning
+  -> generator: multi-step return path (3h)
+  -> uncertainty estimation (PI_80) + staged recommendation funnel
+  -> net-alpha filter (gross - fee - slippage) + soft downside-risk score
+  -> ranked outputs with attention_top3 + prototype_match (trade or watch-only)
 ```
 
 ### Context Features (Macro + Memory)
@@ -50,8 +60,11 @@ We form a macro tape proxy and a "pattern memory" signal:
 - **Historical similarity**: similarity of the recent macro-return window against a memory bank of past windows (pattern localization).
 
 We augment with market-relative and cross-sectional structure:
-- **alpha/beta** style features (market-relative movement)
-- **crypto FF-style factors** (size/momentum/volatility/liquidity premia proxies)
+- **rolling closed-form beta/alpha** (vectorized, window W ∈ {72, 168, 336}h tuned by Optuna)
+- **residual return** as prediction target (coin return minus beta × BTC return)
+- **4-state BTC regime** (Bull/Bear × quiet/volatile via 200h MA + realized volatility quantiles)
+- **FF5-style factors × regime interactions** (e.g., `factor_mom_x_bull`, `factor_liq_x_bear`)
+- **cross-sectional rank normalization** across the dynamic universe
 
 Source of truth for the full feature set: `utils/config.py` (`config.Data.FEATURE_COLUMNS`).
 
@@ -60,14 +73,17 @@ Source of truth for the full feature set: `utils/config.py` (`config.Data.FEATUR
 We encode the same sequence through two complementary views:
 
 ```text
-Input (168h x 27 features)
+Input (168h x 32 features)
   |-> Transformer encoder (global structure / regime-level dependencies)
-  |-> CNN stack (local motifs / shape primitives)
+  |     attention_weights[-1] -> (B, 168) importance row
+  |-> Attention-guided CNN (input weighted by softmax(attention_importance))
+  |     local motifs / shape primitives
   `-> Explainable gated fusion (route / weight the two views)
-  `-> Generator (GAN-style decoder) -> 6-step return path
+  `-> FiLM conditioning on 4-state BTC regime
+  `-> Probabilistic decoder (GAN/CVAE path) -> 3-step residual return path
 ```
 
-The fusion gate is treated as an interpretable variable: when the system leans on local vs global representations, we can attribute which representation dominated the output.
+The fusion gate is treated as an interpretable variable: when the system leans on local vs global representations, we can attribute which representation dominated the output. `attention_top3` exposes the three most influential timesteps per prediction.
 
 ### Uncertainty-Aware Decision Funnel
 
@@ -75,9 +91,14 @@ Predictions do not directly become trades. They pass through a staged funnel whe
 - tradeable validation
 - regime/lead-lag heuristics (macro + micro)
 - liquidity constraints
-- expected-return constraints
+- **net-alpha filter**: live `intraday` long is treated as a spot entry signal, so Step 1 budgets entry-side cost for admission; realized evaluation still subtracts full round-trip cost
+- **downside-risk score**: `step1_score = net_alpha - lambda * max(0, pi_guard_floor - directional_PI_guard)` so downside tail remains penalized without a brittle hard veto
 - uncertainty constraints
-- (optional) similarity / pattern checks
+- similarity / pattern checks (DTW vs success patterns)
+
+Each recommendation carries: `net_alpha`, `PI_80` interval, `attention_top3` (top-3 influential timesteps), and `prototype_match` (nearest success pattern ID + similarity score).
+
+For repo-root live ops, KRW spot is the execution contract. `Short` can still be emitted as a model/view signal, but it degrades to watch-only rather than becoming an executable position by default.
 
 This separation (modeling vs decision) makes the system easier to stabilize in production.
 
@@ -125,15 +146,21 @@ Threats that can invalidate conclusions or inflate backtest performance:
 ## Strengths
 
 - **Hybrid bias**: global trend modeling and local motif extraction are not forced into a single inductive bias.
-- **Explainable routing**: the gate exposes which representation dominated, improving debuggability.
+- **Attention-guided CNN**: Transformer attention directly steers CNN input weighting, coupling the two paths.
+- **Regime conditioning**: FiLM layers condition the fused representation on the 4-state BTC regime.
+- **Explainable routing**: gate + `attention_top3` + `prototype_match` expose why a recommendation was made.
+- **Cost-aware filtering**: net-alpha and PI_80 gates prevent recommendations that don't survive fees/slippage.
+- **Dynamic universe**: training and inference use the top-N markets by 24h volume, not a fixed list.
+- **Leak-free CV**: Purged Walk-Forward with 6h embargo prevents look-ahead contamination in Optuna tuning.
 - **Uncertainty as a constraint**: filtering is explicitly uncertainty-aware rather than post-hoc.
 - **Ops resilience**: stable scheduled automation (timeouts, freshness gates, safe fallback, minimum-output guarantee).
 
 ## Limitations (Current)
 
-- **Compute cost**: Optuna trials are expensive on CPU (5-fold CV, MC-Dropout).
+- **Compute cost**: Optuna trials are expensive on CPU (Purged Walk-Forward CV × MC-Dropout).
 - **Backtest realism**: simplified fills/slippage and incomplete microstructure effects may overstate performance.
 - **Context fragility**: macro context features can help or hurt depending on regime and alignment; leakage/clock alignment must be audited continuously.
+- **Short data history**: dynamic universe alts have ~6 months of data; regime/factor signals need longer history to stabilize.
 - **Exchange dependency**: data collection and tradeability are tailored to Upbit-style market data.
 
 ## Roadmap (Research Direction)
@@ -145,9 +172,11 @@ Threats that can invalidate conclusions or inflate backtest performance:
 3. **Calibration + probabilistic outputs**
    - tighter coupling between uncertainty calibration (ECE), decision thresholds, and realized outcomes.
 4. **Evaluation hardening**
-   - leak checks, fixed end-time backtests for fair ablations, cost models (fees/slippage), and walk-forward stress suites.
+   - fixed end-time backtests for fair ablations, realized cost models (fees/slippage), and walk-forward stress suites.
 5. **Operational autonomy**
-   - continuous health reporting, automated rollback to prior weights, and better market rotation criteria for "top-N" refresh pools.
+   - continuous health reporting, automated rollback to prior weights, and better market rotation criteria for top-N refresh pools.
+6. **Data depth**
+   - BTC/ETH backfill to 2019 (2 halvings); alt backfill to 2021 where available; regime/factor signals require ≥2y to stabilize.
 
 ## Where To Look Next (Source of Truth)
 

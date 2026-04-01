@@ -1,0 +1,408 @@
+{% extends "base.html" %}
+
+{% block title %}백테스트 분석 - Chrono-Trader{% endblock %}
+
+{% block extra_head %}
+<!-- Isolated CSS -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/design-tokens.css') }}?v=1.1">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/control.css') }}?v=1.5">
+<style>
+    /* Period Tab Styling */
+    .period-tabs {
+        display: flex;
+        gap: 0.5rem;
+        background: var(--surface-hover);
+        padding: 4px;
+        border-radius: 12px;
+    }
+
+    .period-tab {
+        padding: 8px 16px;
+        border: none;
+        background: transparent;
+        color: var(--text-muted);
+        font-weight: 600;
+        font-size: 0.9rem;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .period-tab:hover {
+        color: var(--text-main);
+    }
+
+    .period-tab.active {
+        background: var(--ct-primary);
+        color: white;
+        box-shadow: 0 2px 8px rgba(49, 130, 246, 0.3);
+    }
+
+    /* Weekly Summary List */
+    .week-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        max-height: 400px;
+        overflow-y: auto;
+    }
+
+    .week-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem;
+        background: var(--surface-hover);
+        border-radius: 12px;
+        border: 1px solid var(--glass-border);
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .week-item:hover {
+        border-color: var(--ct-primary);
+        transform: translateX(4px);
+    }
+
+    .week-item.active {
+        border-color: var(--ct-primary);
+        background: rgba(49, 130, 246, 0.08);
+    }
+
+    .week-label {
+        font-weight: 600;
+        color: var(--text-main);
+    }
+
+    .week-stats {
+        display: flex;
+        gap: 1rem;
+        font-size: 0.85rem;
+    }
+
+    .week-pnl {
+        font-weight: 700;
+        font-family: 'JetBrains Mono', monospace;
+    }
+
+    .week-pnl.positive {
+        color: var(--up);
+    }
+
+    .week-pnl.negative {
+        color: var(--down);
+    }
+
+    /* Print Styles */
+    @media print {
+        body {
+            background: white !important;
+            color: black !important;
+        }
+
+        .sidebar,
+        .mobile-header,
+        .period-tabs,
+        .btn {
+            display: none !important;
+        }
+
+        .main-content {
+            margin: 0 !important;
+            padding: 20px !important;
+        }
+
+        .glass-panel,
+        .toss-card {
+            background: white !important;
+            box-shadow: none !important;
+            border: 1px solid #ddd !important;
+            break-inside: avoid;
+        }
+
+        .text-white {
+            color: black !important;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-end mb-4 px-2 flex-wrap gap-3">
+        <div>
+            <h1 class="page-title">백테스트 분석</h1>
+            <p class="text-muted small mb-0">Backtest Analysis · AI 모델 시뮬레이션 성과</p>
+        </div>
+
+        <div class="d-flex align-items-center gap-3">
+            <a href="/performance" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-activity me-1"></i>실시간 모니터 이동
+            </a>
+            <!-- Period Tabs -->
+            <div class="period-tabs" role="tablist" aria-label="기간 선택">
+                <button class="period-tab active" data-period="week" onclick="switchPeriod('week')" role="tab"
+                    aria-selected="true" aria-controls="bt-content">이번 주</button>
+                <button class="period-tab" data-period="month" onclick="switchPeriod('month')" role="tab"
+                    aria-selected="false" aria-controls="bt-content">이번 달</button>
+                <button class="period-tab" data-period="all" onclick="switchPeriod('all')" role="tab"
+                    aria-selected="false" aria-controls="bt-content">전체</button>
+            </div>
+
+            <!-- Print Button -->
+            <button class="btn btn-outline-secondary btn-sm" onclick="window.print()">
+                <i class="bi bi-printer me-1"></i>인쇄
+            </button>
+        </div>
+    </div>
+
+    <!-- Row 1: KPI Summary Cards -->
+    <div class="row g-3 mb-4">
+        <!-- Total Return -->
+        <div class="col-6 col-md-3">
+            <div class="glass-panel p-4 h-100 d-flex flex-column justify-content-between">
+                <div>
+                    <div class="toss-card-title mb-2">총 수익률</div>
+                    <div class="fs-2 fw-bold nums" id="bt-total-return" style="color: var(--up);">--</div>
+                </div>
+                <div class="badge bg-success bg-opacity-10 text-success w-100 mt-2 py-2">Total Return</div>
+            </div>
+        </div>
+
+        <!-- Win Rate -->
+        <div class="col-6 col-md-3">
+            <div class="glass-panel p-4 h-100 d-flex flex-column justify-content-between">
+                <div>
+                    <div class="toss-card-title mb-2">승률</div>
+                    <div class="fs-2 fw-bold text-info nums" id="bt-win-rate">--%</div>
+                </div>
+                <div class="badge bg-info bg-opacity-10 text-info w-100 mt-2 py-2">Win Rate</div>
+            </div>
+        </div>
+
+        <!-- Profit Factor -->
+        <div class="col-6 col-md-3">
+            <div class="glass-panel p-4 h-100 d-flex flex-column justify-content-between">
+                <div>
+                    <div class="toss-card-title mb-2">수익 팩터</div>
+                    <div class="fs-2 fw-bold text-warning nums" id="bt-profit-factor">--</div>
+                </div>
+                <div class="badge bg-warning bg-opacity-10 text-warning w-100 mt-2 py-2">Profit Factor</div>
+            </div>
+        </div>
+
+        <!-- Max Drawdown -->
+        <div class="col-6 col-md-3">
+            <div class="glass-panel p-4 h-100 d-flex flex-column justify-content-between">
+                <div>
+                    <div class="toss-card-title mb-2">최대 손실폭</div>
+                    <div class="fs-2 fw-bold nums" id="bt-mdd" style="color: var(--down);">--%</div>
+                </div>
+                <div class="badge bg-danger bg-opacity-10 text-danger w-100 mt-2 py-2">Max Drawdown</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 1.5: Risk-Adjusted Metrics (Professional Portfolio) -->
+    <div class="row g-3 mb-4">
+        <div class="col-12">
+            <div class="glass-panel p-4">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="toss-card-title mb-0"><i class="bi bi-shield-check me-2"></i>리스크 조정 지표 (Risk-Adjusted
+                        Metrics)</h5>
+                    <span class="badge bg-secondary bg-opacity-10 text-secondary">Portfolio Grade</span>
+                </div>
+
+                <div class="row g-3">
+                    <!-- Sharpe Ratio -->
+                    <div class="col-6 col-md-4 col-lg-2">
+                        <div class="text-center p-3 rounded" style="background: var(--surface-hover);">
+                            <div class="small text-muted mb-1">Sharpe Ratio</div>
+                            <div class="fs-4 fw-bold nums" id="bt-sharpe">--</div>
+                            <div class="small text-muted mt-1">위험 대비 수익</div>
+                        </div>
+                    </div>
+
+                    <!-- Sortino Ratio -->
+                    <div class="col-6 col-md-4 col-lg-2">
+                        <div class="text-center p-3 rounded" style="background: var(--surface-hover);">
+                            <div class="small text-muted mb-1">Sortino Ratio</div>
+                            <div class="fs-4 fw-bold nums" id="bt-sortino">--</div>
+                            <div class="small text-muted mt-1">하방 변동성 기준</div>
+                        </div>
+                    </div>
+
+                    <!-- Calmar Ratio -->
+                    <div class="col-6 col-md-4 col-lg-2">
+                        <div class="text-center p-3 rounded" style="background: var(--surface-hover);">
+                            <div class="small text-muted mb-1">Calmar Ratio</div>
+                            <div class="fs-4 fw-bold nums" id="bt-calmar">--</div>
+                            <div class="small text-muted mt-1">수익률 ÷ MDD</div>
+                        </div>
+                    </div>
+
+                    <!-- Avg Win/Loss Ratio -->
+                    <div class="col-6 col-md-4 col-lg-2">
+                        <div class="text-center p-3 rounded" style="background: var(--surface-hover);">
+                            <div class="small text-muted mb-1">Avg Win / Loss</div>
+                            <div class="fs-4 fw-bold nums" id="bt-win-loss-ratio">--</div>
+                            <div class="small text-muted mt-1">평균 수익/손실 비</div>
+                        </div>
+                    </div>
+
+                    <!-- Max Consecutive Losses -->
+                    <div class="col-6 col-md-4 col-lg-2">
+                        <div class="text-center p-3 rounded" style="background: var(--surface-hover);">
+                            <div class="small text-muted mb-1">Max Consec. Loss</div>
+                            <div class="fs-4 fw-bold nums" id="bt-max-consec-loss" style="color: var(--down);">--</div>
+                            <div class="small text-muted mt-1">연속 손실 최대</div>
+                        </div>
+                    </div>
+
+                    <!-- Recovery Factor -->
+                    <div class="col-6 col-md-4 col-lg-2">
+                        <div class="text-center p-3 rounded" style="background: var(--surface-hover);">
+                            <div class="small text-muted mb-1">Recovery Factor</div>
+                            <div class="fs-4 fw-bold nums" id="bt-recovery-factor">--</div>
+                            <div class="small text-muted mt-1">회복력 지표</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Benchmark Comparison -->
+                <div class="row g-3 mt-3">
+                    <div class="col-md-4">
+                        <div class="d-flex justify-content-between align-items-center p-2 rounded"
+                            style="background: var(--surface-hover);">
+                            <span class="small text-muted">Alpha (시장 초과수익)</span>
+                            <span class="fw-bold nums" id="bt-alpha">--%</span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="d-flex justify-content-between align-items-center p-2 rounded"
+                            style="background: var(--surface-hover);">
+                            <span class="small text-muted">Beta (시장 상관성)</span>
+                            <span class="fw-bold nums" id="bt-beta">--</span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="d-flex justify-content-between align-items-center p-2 rounded"
+                            style="background: var(--surface-hover);">
+                            <span class="small text-muted">vs BTC Buy&Hold</span>
+                            <span class="fw-bold nums" id="bt-vs-btc">--%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 2: Equity Chart + Weekly Summary -->
+    <div class="row g-3 mb-4">
+        <!-- Equity Curve (Large) -->
+        <div class="col-lg-8">
+            <div class="glass-panel p-4 h-100">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="toss-card-title mb-0">자산 성장 곡선 (Equity Curve)</h5>
+                    <span class="badge bg-primary bg-opacity-10 text-primary" id="bt-period-label">이번 주</span>
+                </div>
+                <div style="height: 350px;">
+                    <canvas id="btEquityChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Weekly Summary List -->
+        <div class="col-lg-4">
+            <div class="glass-panel p-4 h-100">
+                <h5 class="toss-card-title mb-3">주간별 성과</h5>
+                <div class="week-list" id="week-list">
+                    <div class="text-center text-muted py-4">
+                        <i class="bi bi-hourglass-split"></i> 데이터 로딩 중...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 3: Monthly Heatmap & Stats -->
+    <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+            <div class="glass-panel p-4 h-100">
+                <h5 class="toss-card-title mb-3">월별 수익률 히트맵</h5>
+                <div id="monthly-heatmap" class="d-flex flex-wrap gap-2">
+                    <!-- JS will populate -->
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="glass-panel p-4 h-100">
+                <h5 class="toss-card-title mb-3">거래 분포</h5>
+                <div style="height: 200px;">
+                    <canvas id="btTradeDistChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 4: Trade History Table -->
+    <div class="glass-panel p-0 mb-5">
+        <div
+            class="p-4 border-bottom border-secondary border-opacity-10 d-flex justify-content-between align-items-center">
+            <h5 class="toss-card-title mb-0">거래 내역 (Trade Ledger)</h5>
+            <div class="d-flex gap-2">
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-secondary active" onclick="filterBtTrades('all')">전체</button>
+                    <button class="btn btn-outline-secondary" onclick="filterBtTrades('win')">수익</button>
+                    <button class="btn btn-outline-secondary" onclick="filterBtTrades('loss')">손실</button>
+                </div>
+                <button class="btn btn-outline-primary btn-sm" onclick="exportBtCSV()">
+                    <i class="bi bi-download me-1"></i>CSV
+                </button>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <caption class="visually-hidden">백테스트 거래 내역</caption>
+                <thead>
+                    <tr>
+                        <th class="ps-4">날짜</th>
+                        <th class="text-center">종목</th>
+                        <th class="text-center">방향</th>
+                        <th class="text-end">진입가</th>
+                        <th class="text-end">청산가</th>
+                        <th class="text-end">수익률</th>
+                        <th class="text-end pe-4">상태</th>
+                    </tr>
+                </thead>
+                <tbody id="bt-trade-body" class="nums">
+                    <tr>
+                        <td colspan="7" class="text-center py-4 text-muted">데이터 로딩 중...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <!-- Pagination -->
+        <div
+            class="p-3 d-flex justify-content-between align-items-center border-top border-secondary border-opacity-10">
+            <span class="text-muted small" id="bt-trade-count">-- 거래</span>
+            <nav>
+                <ul class="pagination pagination-sm mb-0" id="bt-pagination">
+                    <!-- JS will populate -->
+                </ul>
+            </nav>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<!-- Chart.js with SRI - defer로 로딩하여 렌더링 블로킹 방지 -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
+    integrity="sha384-kccvo77tR1pJPbY7Yve0e0XM1kFfNtVTdolFBVxoNkRYLdW0bfglDPM2Sxnexdj8"
+    crossorigin="anonymous"></script>
+<script src="{{ url_for('static', filename='js/backtest.js') }}?v=2.1"></script>
+{% endblock %}

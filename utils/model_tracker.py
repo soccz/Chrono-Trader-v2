@@ -15,16 +15,16 @@ class ModelPerformanceTracker:
     Used to weight model predictions based on recent performance.
     
     Example:
-        tracker = ModelPerformanceTracker(n_models=5, window=50)
-        
+        tracker = ModelPerformanceTracker(n_models=4, window=50)
+
         # After each prediction is validated
         tracker.update(model_id=2, was_correct=True)
-        
+
         # Get weights for weighted average
-        weights = tracker.get_weights()  # [0.18, 0.22, 0.25, 0.18, 0.17]
+        weights = tracker.get_weights()  # [0.25, 0.25, 0.25, 0.25]
     """
-    
-    def __init__(self, n_models: int = 5, window: int = 50, save_path: str = "models/model_performance.json"):
+
+    def __init__(self, n_models: int = 4, window: int = 50, save_path: str = "models/model_performance.json"):
         """
         Args:
             n_models: Number of ensemble models to track
@@ -184,7 +184,7 @@ class ModelPerformanceTracker:
 # Global singleton instance
 _TRACKER_INSTANCE = None
 
-def get_tracker(n_models: int = 5) -> ModelPerformanceTracker:
+def get_tracker(n_models: int = 4) -> ModelPerformanceTracker:
     """Get or create the global tracker instance."""
     global _TRACKER_INSTANCE
     if _TRACKER_INSTANCE is None:

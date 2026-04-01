@@ -1,0 +1,92 @@
+{
+  "app": {
+    "title": "Chrono-Trader"
+  },
+  "nav": {
+    "home": "홈",
+    "control": "컨트롤 패널",
+    "performance": "성과 분석",
+    "model": "모델 설정",
+    "docs": "문서",
+    "tasks": "할 일"
+  },
+  "footer": {
+    "copyright": "© 2024 Chrono-Trader v2 | Transformer + CNN + GAN"
+  },
+  "home": {
+    "title": "Chrono-Trader 대시보드",
+    "subtitle": "AI 기반 암호화폐 트레이딩 시스템",
+    "total_predictions": "총 예측 수",
+    "accuracy": "정확도",
+    "model_status": "모델 상태",
+    "system_status": "시스템 상태",
+    "all_time": "전체",
+    "last_run": "최근 실행",
+    "ready": "준비됨",
+    "current": "현재",
+    "project_overview": "프로젝트 개요",
+    "architecture_title": "Transformer + CNN + GAN 하이브리드 아키텍처",
+    "architecture_desc": "이 시스템은 Transformer(전체 추세 파악), CNN(패턴 인식), GAN(확률 분포 생성)을 결합하여 암호화폐 시장의 미래 가격 변동을 예측합니다.",
+    "strategies_title": "3가지 핵심 전략",
+    "strategy_trending": "추세 추종 (Trending)",
+    "strategy_trending_desc": "현재 상승 중인 코인의 모멘텀을 따라감",
+    "strategy_pattern": "패턴 매칭 (Pattern)",
+    "strategy_pattern_desc": "대장주의 과거 패턴과 유사한 후발주 발굴",
+    "strategy_pump": "급등 포착 (Pump)",
+    "strategy_pump_desc": "단기간 10% 이상 급등 가능성 예측",
+    "quick_actions": "빠른 실행",
+    "btn_run_daily": "데일리 실행",
+    "btn_train_model": "모델 학습",
+    "btn_view_performance": "성과 보기",
+    "btn_view_tasks": "할 일 보기",
+    "recent_activity": "최근 활동",
+    "no_activity": "활동 없음"
+  },
+  "control": {
+    "title": "컨트롤 패널",
+    "training_section": "모델 학습",
+    "daily_section": "데일리 파이프라인",
+    "backtest_section": "백테스트",
+    "epochs_label": "Epochs:",
+    "daily_epochs_label": "Fine-tune Epochs:",
+    "backtest_days_label": "Days:",
+    "tune_hyperparams": "하이퍼파라미터 튜닝",
+    "btn_start_training": "학습 시작",
+    "btn_run_daily": "데일리 실행",
+    "btn_run_backtest": "백테스트 실행",
+    "status_idle": "대기 중",
+    "status_running": "실행 중...",
+    "log_console": "실시간 로그",
+    "clear_logs": "지우기",
+    "waiting_for_logs": "로그 대기 중..."
+  },
+  "performance": {
+    "title": "성과 대시보드",
+    "total_predictions": "총 예측 수",
+    "accuracy": "정확도",
+    "avg_error": "평균 오차",
+    "win_rate": "승률",
+    "predictions_chart": "예측 vs 실제",
+    "signal_distribution": "신호 분포",
+    "recent_predictions": "최근 예측 결과",
+    "market": "마켓",
+    "signal": "신호",
+    "predicted": "예측",
+    "actual": "실제",
+    "error": "오차",
+    "status": "상태"
+  },
+  "model": {
+    "title": "모델 설정",
+    "architecture": "모델 아키텍처",
+    "hyperparameters": "하이퍼파라미터",
+    "saved_models": "저장된 모델",
+    "tuned_config": "튜닝된 설정 (model_config.json)"
+  },
+  "docs": {
+    "title": "프로젝트 문서"
+  },
+  "tasks": {
+    "title": "할 일 & 로드맵"
+  }
+}

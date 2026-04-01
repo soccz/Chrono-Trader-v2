@@ -1,0 +1,327 @@
+/* 
+ * Control Panel Isolated Styles 
+ * Uses variables from design-tokens.css
+ */
+
+/* --- Layout --- */
+.control-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--ct-spacing-lg);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Pretendard", sans-serif;
+}
+
+.page-title {
+    font-size: 2.2rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    background: linear-gradient(90deg, var(--ct-text-primary), var(--ct-primary));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    display: inline-block;
+    margin-bottom: 0;
+}
+
+.page-subtitle {
+    font-size: 0.95rem;
+    color: var(--ct-text-secondary);
+    font-weight: 500;
+    letter-spacing: -0.01em;
+}
+
+.control-grid {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: var(--ct-spacing-lg);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Pretendard", sans-serif;
+}
+
+@media (max-width: 1024px) {
+    .control-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* --- Theme Overrides for Control Panel --- */
+.toss-card {
+    background: var(--ct-bg-surface) !important;
+    border: 1px solid var(--ct-border-color) !important;
+    color: var(--ct-text-primary) !important;
+    box-shadow: var(--ct-shadow-sm) !important;
+}
+
+/* Ensure headings inside cards are also white */
+.toss-card h1,
+.toss-card h2,
+.toss-card h3,
+.toss-card h4,
+.toss-card h5,
+.toss-card h6 {
+    color: var(--ct-text-primary) !important;
+}
+
+/* --- Premium Inputs & Forms --- */
+.form-control,
+.form-select {
+    background: rgba(255, 255, 255, 0.03) !important;
+    border: 1px solid var(--ct-border-color) !important;
+    color: var(--ct-text-primary) !important;
+    border-radius: 12px !important;
+    backdrop-filter: blur(10px);
+    transition: all 0.3s ease;
+    padding: 12px 16px;
+    font-size: 0.95rem;
+}
+
+.form-control:focus,
+.form-select:focus {
+    background: rgba(49, 130, 246, 0.1) !important;
+    border-color: var(--ct-primary) !important;
+    box-shadow: 0 0 0 4px var(--ct-primary-subtle) !important;
+    transform: translateY(-1px);
+}
+
+.form-label {
+    font-weight: 500;
+    color: var(--ct-text-secondary);
+    margin-bottom: 8px;
+}
+
+/* Custom Checkbox */
+.form-check-input {
+    background-color: transparent;
+    border: 1px solid var(--ct-text-secondary);
+    width: 1.2em;
+    height: 1.2em;
+    cursor: pointer;
+    margin-top: 0.1em;
+}
+
+.form-check-input:checked {
+    background-color: var(--ct-primary);
+    border-color: var(--ct-primary);
+    box-shadow: var(--ct-shadow-neon);
+}
+
+.form-check-label {
+    cursor: pointer;
+    user-select: none;
+    padding-left: 6px;
+    font-weight: 500;
+}
+
+/* --- Buttons --- */
+.btn {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 12px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+.btn:active {
+    transform: scale(0.96);
+}
+
+/* --- Tabs --- */
+.nav-tabs-ct {
+    border-bottom: 1px solid var(--ct-border-color);
+    margin-bottom: var(--ct-spacing-md);
+}
+
+.nav-link-ct {
+    background: transparent;
+    border: none;
+    color: var(--ct-text-secondary);
+    padding: 12px 20px;
+    font-weight: 600;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    font-family: "Pretendard", sans-serif;
+}
+
+.nav-link-ct:hover {
+    color: var(--ct-text-primary);
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 8px;
+}
+
+.nav-link-ct.active {
+    color: var(--ct-primary);
+    background: rgba(49, 130, 246, 0.1);
+    border-radius: 8px;
+}
+
+/* --- System Monitor --- */
+.monitor-card {
+    background: var(--ct-bg-surface-elevated);
+    border-radius: var(--ct-radius-md);
+    padding: var(--ct-spacing-md);
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    border: 1px solid var(--ct-border-color);
+    margin-bottom: var(--ct-spacing-md);
+}
+
+.metric-item {
+    text-align: center;
+}
+
+.metric-label {
+    font-size: 0.8em;
+    color: var(--ct-text-secondary);
+    margin-bottom: 4px;
+}
+
+.metric-value {
+    font-size: 1.2em;
+    font-weight: 700;
+    color: var(--ct-text-primary);
+}
+
+.metric-bar {
+    width: 60px;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    margin: 4px auto 0;
+    overflow: hidden;
+}
+
+.metric-fill {
+    height: 100%;
+    background: var(--ct-primary);
+    width: 0%;
+    transition: width 0.3s;
+}
+
+/* --- Quick Actions (Cards) --- */
+.action-card {
+    background: var(--ct-bg-surface);
+    border: 1px solid var(--ct-border-color);
+    border-radius: var(--ct-radius-md);
+    padding: var(--ct-spacing-md);
+    transition: all 0.2s;
+    cursor: pointer;
+    text-align: left;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.action-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--ct-primary);
+    box-shadow: var(--ct-shadow-neon);
+}
+
+.action-icon {
+    font-size: 1.5rem;
+    margin-bottom: var(--ct-spacing-sm);
+    color: var(--ct-primary);
+}
+
+.action-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.action-desc {
+    font-size: 0.85em;
+    color: var(--ct-text-secondary);
+}
+
+/* --- Log Console --- */
+.log-console-container {
+    background: #000;
+    border: 1px solid var(--ct-border-color);
+    border-radius: var(--ct-radius-md);
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 0.9em;
+    height: 500px;
+    display: flex;
+    flex-direction: column;
+}
+
+.log-header {
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--ct-border-color);
+    background: rgba(255, 255, 255, 0.05);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.log-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    color: #eee;
+}
+
+/* Custom Scrollbar for Logs */
+.log-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.log-content::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.log-content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+}
+
+.log-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.log-entry {
+    margin-bottom: 4px;
+    line-height: 1.4;
+    border-left: 2px solid transparent;
+    padding-left: 8px;
+}
+
+.log-info {
+    border-left-color: var(--ct-info);
+    color: #a9d6e5;
+}
+
+.log-warn {
+    border-left-color: var(--ct-warning);
+    color: #fcefb4;
+}
+
+.log-error {
+    border-left-color: var(--ct-danger);
+    color: #ffadad;
+}
+
+.log-success {
+    border-left-color: var(--ct-success);
+    color: #b7e4c7;
+}
+
+/* Status Badges */
+.status-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.05);
+    font-size: 0.85em;
+    font-weight: 500;
+    border: 1px solid transparent;
+}
+
+.status-indicator.active {
+    background: rgba(49, 130, 246, 0.15);
+    color: var(--ct-primary);
+    border-color: rgba(49, 130, 246, 0.3);
+    box-shadow: 0 0 12px rgba(49, 130, 246, 0.1);
+}

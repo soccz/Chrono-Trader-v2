@@ -56,3 +56,27 @@ data/pump_dataset.csv
 portfolio_state.json
 cloudflared*
 tunnel_url.txt
+
+# Virtual environments (all variants)
+.venv_local/
+.venv*/
+
+# Claude agent state
+.claude/
+
+# Model backups (large binary)
+models/backup_*/
+models/bootstrap_backup_*/
+
+# Data artifacts
+data/*.npy.bak*
+data/success_patterns.npy
+
+# Paper track (separate repo)
+aaa/
+
+# Temp scripts
+run_bull_backtest.sh
+auto_pipeline_v2.*
+training_final_v2.*
+backtest_final_v2.*
